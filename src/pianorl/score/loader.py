@@ -111,3 +111,53 @@ def load_score(file_path: str | Path) -> Score:
 
     tempo = first_tempo_bpm if first_tempo_bpm is not None else 120.0
     return Score(notes=notes, tempo_bpm=tempo)
+
+
+def save_score_to_midi(
+    score: Score,
+    file_path: str | Path,
+    ticks_per_beat: int = 480,
+) -> None:
+    """Save a Score object as a standard MIDI (.mid) file.
+
+    Args:
+        score: The Score object to write.
+        file_path: Destination file path.
+        ticks_per_beat: Ticks per beat resolution (default: 480).
+    """
+    path = Path(file_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    mid = mido.MidiFile(ticks_per_beat=ticks_per_beat)
+    track = mido.MidiTrack()
+    mid.tracks.append(track)
+
+    # Set tempo
+    track.append(
+        mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(score.tempo_bpm), time=0)
+    )
+
+    # Convert notes to absolute tick events
+    events: List[Tuple[int, str, int, int]] = []
+    for note in score.notes:
+        start_tick = int(round(note.start_beat * ticks_per_beat))
+        end_tick = int(round(note.end_beat * ticks_per_beat))
+        events.append((start_tick, "note_on", note.pitch, 64))
+        events.append((end_tick, "note_off", note.pitch, 0))
+
+    # Sort events: primary by tick, secondary note_off before note_on at same tick
+    events.sort(key=lambda e: (e[0], 0 if e[1] == "note_off" else 1))
+
+    # Add messages with delta times
+    last_tick = 0
+    for tick, event_type, pitch, velocity in events:
+        delta_ticks = tick - last_tick
+        track.append(
+            mido.Message(
+                event_type, note=pitch, velocity=velocity, time=delta_ticks
+            )
+        )
+        last_tick = tick
+
+    mid.save(str(path))
+

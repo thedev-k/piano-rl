@@ -27,6 +27,15 @@ __pycache__/
 *.mp3
 *.flac
 
+# Generated procedural dataset and visualization outputs
+/data/train/*
+!/data/train/.gitkeep
+/data/heldout/*
+!/data/heldout/.gitkeep
+/data/manifest.json
+/outputs/
+
+
 # OS and editor files
 .DS_Store
 Thumbs.db
