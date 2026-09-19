@@ -9,3 +9,27 @@ To procedurally generate the training and held-out dataset (800 pieces across 4 
 python scripts/generate_dataset.py
 ```
 
+## How to Train
+
+1. **Activate your virtual environment (Windows PowerShell):**
+   ```powershell
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+2. **Start the Level 1 training run (300,000 timesteps on CPU):**
+   ```powershell
+   python scripts/train.py --levels 1 --timesteps 300000 --run-name level1_run
+   ```
+
+3. **Open TensorBoard to view live learning curves:**
+   ```powershell
+   tensorboard --logdir runs
+   ```
+   *(Then open http://localhost:6006 in your web browser)*
+
+4. **Evaluate the finished model on the held-out pieces:**
+   ```powershell
+   python scripts/evaluate.py --player ppo --model-path checkpoints/level1_run/final.zip --split heldout
+   ```
+
+

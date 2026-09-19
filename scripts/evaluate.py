@@ -135,8 +135,8 @@ def main():
         "--player",
         type=str,
         default="rule_based",
-        choices=["random", "silent", "rule_based"],
-        help="Player to evaluate (random, silent, or rule_based)",
+        choices=["random", "silent", "rule_based", "ppo"],
+        help="Player to evaluate (random, silent, rule_based, or ppo)",
     )
     parser.add_argument(
         "--split",
@@ -144,6 +144,12 @@ def main():
         default="heldout",
         choices=["train", "heldout"],
         help="Dataset split to evaluate on (train or heldout)",
+    )
+    parser.add_argument(
+        "--model-path",
+        type=str,
+        default=None,
+        help="Path to trained PPO model zip file (required if --player ppo)",
     )
     args = parser.parse_args()
 
@@ -166,10 +172,22 @@ def main():
     # Instantiate player
     if args.player == "random":
         player = RandomPlayer(seed=42)
+        save_name = f"results_random_{args.split}.csv"
     elif args.player == "silent":
         player = DoNothingPlayer()
+        save_name = f"results_silent_{args.split}.csv"
     elif args.player == "rule_based":
         player = RuleBasedPlayer()
+        save_name = f"results_rule_based_{args.split}.csv"
+    elif args.player == "ppo":
+        if not args.model_path:
+            raise ValueError("--model-path is required when --player is ppo")
+        model_p = Path(args.model_path)
+        if not model_p.exists():
+            raise FileNotFoundError(f"Trained model not found at '{model_p}'")
+        from pianorl.eval import PPOPlayer
+        player = PPOPlayer(model_p)
+        save_name = f"results_ppo_{model_p.stem}_{args.split}.csv"
     else:
         raise ValueError(f"Unknown player {args.player}")
 
@@ -178,8 +196,9 @@ def main():
 
     print_results_table(results, args.player, args.split)
 
-    csv_path = Path("outputs") / f"results_{args.player}_{args.split}.csv"
+    csv_path = Path("outputs") / save_name
     save_results_csv(results, csv_path)
+
 
 
 if __name__ == "__main__":

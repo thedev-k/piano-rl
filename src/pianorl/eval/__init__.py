@@ -1,5 +1,5 @@
 from .dummies import PerfectPlayer, SilentPlayer, SpamPlayer
-from .players import RandomPlayer, DoNothingPlayer, RuleBasedPlayer
+from .players import RandomPlayer, DoNothingPlayer, RuleBasedPlayer, PPOPlayer
 from .metrics import EpisodeCounters, EvaluationMetrics, compute_metrics, aggregate_and_compute
 
 __all__ = [
@@ -9,6 +9,7 @@ __all__ = [
     "RandomPlayer",
     "DoNothingPlayer",
     "RuleBasedPlayer",
+    "PPOPlayer",
     "EpisodeCounters",
     "EvaluationMetrics",
     "compute_metrics",

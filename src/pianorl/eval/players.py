@@ -43,3 +43,20 @@ class RuleBasedPlayer:
             # Key action is 1-indexed (row 0 -> action 1)
             return int(active_onsets[0] + 1)
         return 0
+
+
+class PPOPlayer:
+    """Fair player driven by a trained Stable-Baselines3 PPO model.
+
+    Receives ONLY the observation vector and uses deterministic prediction.
+    """
+
+    def __init__(self, model_path):
+        from stable_baselines3 import PPO
+
+        self.model = PPO.load(str(model_path), device="cpu")
+
+    def act(self, observation: np.ndarray) -> int:
+        action, _states = self.model.predict(observation, deterministic=True)
+        return int(action)
+

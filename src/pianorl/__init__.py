@@ -11,6 +11,7 @@ from pianorl.eval import (
     RandomPlayer,
     DoNothingPlayer,
     RuleBasedPlayer,
+    PPOPlayer,
     EvaluationMetrics,
     compute_metrics,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "RandomPlayer",
     "DoNothingPlayer",
     "RuleBasedPlayer",
+    "PPOPlayer",
     "EvaluationMetrics",
     "compute_metrics",
 ]
