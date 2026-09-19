@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Dict, List
 
-from pianorl.env import PianoFreeKeysEnv
+from pianorl.env import PianoFreeKeysEnv, RewardConfig
 from pianorl.eval import (
     DoNothingPlayer,
     EpisodeCounters,
@@ -31,7 +31,17 @@ def evaluate_player(
     Returns:
         Dict mapping level string (e.g. 'Level 1', 'Overall') to EvaluationMetrics.
     """
-    env = PianoFreeKeysEnv(scores=scores_list, seed=42)
+    # IMPORTANT: Evaluation rewards must ALWAYS use the standard default numbers
+    # (hit_exact=+1.0, hit_off_by_one=+0.5, wrong_press=-0.5, miss=-1.0).
+    # This ensures that Mean Reward remains directly comparable across runs,
+    # even when different models were trained with customized reward weights.
+    standard_rewards = RewardConfig(
+        hit_exact=1.0,
+        hit_off_by_one=0.5,
+        wrong_press=-0.5,
+        miss=-1.0,
+    )
+    env = PianoFreeKeysEnv(scores=scores_list, seed=42, reward_config=standard_rewards)
 
     level_counters: Dict[int, List[EpisodeCounters]] = {1: [], 2: [], 3: [], 4: []}
     all_counters: List[EpisodeCounters] = []

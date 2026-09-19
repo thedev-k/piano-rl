@@ -11,7 +11,7 @@ from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
-from pianorl.env import PianoFreeKeysEnv
+from pianorl.env import PianoFreeKeysEnv, RewardConfig
 from pianorl.score import Score, load_score
 
 
@@ -57,10 +57,10 @@ class PlainProgressCallback(BaseCallback):
         return True
 
 
-def make_env(scores: List[Score], seed: int, rank: int):
+def make_env(scores: List[Score], seed: int, rank: int, reward_config: RewardConfig = None):
     def _init():
         torch.set_num_threads(1)
-        env = PianoFreeKeysEnv(scores=scores, seed=seed + rank * 1000)
+        env = PianoFreeKeysEnv(scores=scores, seed=seed + rank * 1000, reward_config=reward_config)
         env = Monitor(env)
         return env
 
@@ -110,22 +110,52 @@ def train(
     n_steps: int = 2048,
     batch_size: int = 64,
     ent_coef: float = 0.01,
+    exact_reward: float = 1.0,
+    off_by_one_reward: float = 0.5,
+    wrong_press_penalty: float = -0.5,
+    miss_penalty: float = -1.0,
 ) -> Path:
     data_dir = Path("data")
     manifest_path = data_dir / "manifest.json"
     scores = load_training_pieces(manifest_path, levels, data_dir)
 
+    reward_config = RewardConfig(
+        hit_exact=exact_reward,
+        hit_off_by_one=off_by_one_reward,
+        wrong_press=wrong_press_penalty,
+        miss=miss_penalty,
+    )
+    print("\nReward configuration:")
+    print(f"  Exact hit reward:       {reward_config.hit_exact:+.2f}")
+    print(f"  Off-by-one hit reward:  {reward_config.hit_off_by_one:+.2f}")
+    print(f"  Wrong press penalty:    {reward_config.wrong_press:+.2f}")
+    print(f"  Miss penalty:           {reward_config.miss:+.2f}")
+
     print(f"\nSetting up {n_envs} parallel environment(s) (CPU only, 1 thread/worker)...")
     if n_envs > 1:
-        env = SubprocVecEnv([make_env(scores, seed, i) for i in range(n_envs)])
+        env = SubprocVecEnv([make_env(scores, seed, i, reward_config=reward_config) for i in range(n_envs)])
     else:
-        env = DummyVecEnv([make_env(scores, seed, 0)])
+        env = DummyVecEnv([make_env(scores, seed, 0, reward_config=reward_config)])
 
     # Output paths
     checkpoints_dir = Path("checkpoints") / run_name
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
     runs_dir = Path("runs") / run_name
     runs_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save reward config alongside checkpoints
+    reward_config_path = checkpoints_dir / "reward_config.json"
+    with open(reward_config_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "hit_exact": reward_config.hit_exact,
+                "hit_off_by_one": reward_config.hit_off_by_one,
+                "wrong_press": reward_config.wrong_press,
+                "miss": reward_config.miss,
+            },
+            f,
+            indent=2,
+        )
 
     # Model architecture: 2 layers of 256 units
     policy_kwargs = dict(net_arch=dict(pi=[256, 256], vf=[256, 256]))
@@ -267,6 +297,30 @@ def main():
         default=0.01,
         help="Entropy coefficient to encourage exploration (default: 0.01)",
     )
+    parser.add_argument(
+        "--exact-reward",
+        type=float,
+        default=1.0,
+        help="Reward for hitting a note at the exact start step (default: 1.0)",
+    )
+    parser.add_argument(
+        "--off-by-one-reward",
+        type=float,
+        default=0.5,
+        help="Reward for hitting a note 1 step early or late (default: 0.5)",
+    )
+    parser.add_argument(
+        "--wrong-press-penalty",
+        type=float,
+        default=-0.5,
+        help="Penalty (negative float) for pressing a key when no note matches (default: -0.5)",
+    )
+    parser.add_argument(
+        "--miss-penalty",
+        type=float,
+        default=-1.0,
+        help="Penalty (negative float) for letting a note pass unplayed (default: -1.0)",
+    )
 
     args = parser.parse_args()
 
@@ -281,6 +335,10 @@ def main():
         n_steps=args.n_steps,
         batch_size=args.batch_size,
         ent_coef=args.ent_coef,
+        exact_reward=args.exact_reward,
+        off_by_one_reward=args.off_by_one_reward,
+        wrong_press_penalty=args.wrong_press_penalty,
+        miss_penalty=args.miss_penalty,
     )
 
 

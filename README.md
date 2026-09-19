@@ -32,4 +32,41 @@ python scripts/generate_dataset.py
    python scripts/evaluate.py --player ppo --model-path checkpoints/level1_run/final.zip --split heldout
    ```
 
+## Diagnosing Mistakes (`scripts/diagnose.py`)
+
+To understand *why* an agent made mistakes and where its wrong key presses came from, run the diagnostic tool:
+
+```powershell
+python scripts/diagnose.py --model-path checkpoints/all_levels_run/final.zip --split heldout
+```
+
+Every wrong key press is categorized into exactly one of three simple groups:
+- **Repeat**: The model struck the right pitch, but did it again right before or right after the note started (a double-strike or echo).
+- **Wrong Key Near Note**: A note was starting nearby in time, but the model struck the wrong piano key.
+- **No Note Nearby**: The model pressed a key when there was no note playing or coming up at all (unprovoked ghost presses during rests).
+
+The tool also reports **Presses/Note** (how many keys the model pressed per note, where 1.0 is ideal), **Recall**, and **Precision**.
+
+## Customizing Training Rewards
+
+You can adjust the reward and penalty numbers from the command line in `scripts/train.py`:
+
+```powershell
+python scripts/train.py --levels 1 --timesteps 300000 --run-name custom_rewards_run `
+    --exact-reward 1.0 `
+    --off-by-one-reward 0.5 `
+    --wrong-press-penalty -1.0 `
+    --miss-penalty -1.0
+```
+
+Available reward flags (and their default values):
+- `--exact-reward` (default `1.0`): Points awarded for striking a note at the exact start step.
+- `--off-by-one-reward` (default `0.5`): Points awarded for striking a note 1 step early or late.
+- `--wrong-press-penalty` (default `-0.5`): Penalty for pressing a key when no note matches.
+- `--miss-penalty` (default `-1.0`): Penalty for allowing a note to pass completely unplayed.
+
+The chosen configuration is printed at the start of training and saved to `checkpoints/<run-name>/reward_config.json`.
+
+> **Note on Evaluation:** `scripts/evaluate.py` always evaluates models using the standard default reward numbers (`+1.0`, `+0.5`, `-0.5`, `-1.0`). This guarantees that Mean Reward scores remain directly and fairly comparable across runs trained with different penalty settings.
+
 
