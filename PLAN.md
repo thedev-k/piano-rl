@@ -208,4 +208,10 @@ Do not skip milestone 2. If the agent can't learn the easy version, the harder v
    - Because early practice pieces are strictly single-line melodies (one note at a time), striking at most one key per step simplifies learning. Note-holding is not modeled yet (only note onset/start timing counts). Complex hand/finger kinematics will be introduced in subsequent milestones.
 2. **Time Resolution:**
    - 16th-note time slices (`steps_per_beat = 4`). Each step corresponds to a quarter of a beat, providing fine enough resolution for musical timing while keeping computational load light on CPU.
+3. **Grading & Evaluation:**
+   - Precision: $TP / (TP + FP)$ where $TP = \text{hits\_exact} + \text{hits\_off\_by\_one}$, and $FP = \text{wrong\_presses}$.
+   - Recall: $TP / (TP + FN)$ where $FN = \text{missed\_notes}$.
+   - Note F1 Score: Harmonic mean of precision and recall ($2 \cdot P \cdot R / (P + R)$).
+   - Exact Rate: $\text{hits\_exact} / \text{total\_notes}$.
+   - Aggregation rule: Across a dataset split or difficulty level, raw event counters are summed first before computing rates, avoiding distortions caused by averaging percentages.
 

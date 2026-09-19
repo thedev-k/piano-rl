@@ -1,7 +1,7 @@
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -19,7 +19,38 @@ class RewardConfig:
     miss: float = -1.0              # Failing to strike a note before window closes
 
 
+def split_observation(
+    obs: np.ndarray,
+    n_beats: int = 4,
+    steps_per_beat: int = 4,
+) -> Tuple[np.ndarray, np.ndarray, float]:
+    """Split a flat observation vector back into its constituent components.
+
+    Args:
+        obs: Flat 1D numpy array from PianoFreeKeysEnv.
+        n_beats: Lookahead length in beats (default: 4).
+        steps_per_beat: Resolution in steps per beat (default: 4).
+
+    Returns:
+        Tuple containing:
+            - window: np.ndarray of shape (2, 88, slots)
+            - beat_position: np.ndarray of shape (steps_per_beat,) (one-hot vector)
+            - tempo: float (normalized tempo in [0, 1])
+    """
+    slots = n_beats * steps_per_beat
+    window_size = 2 * NUM_PIANO_KEYS * slots
+
+    window_flat = obs[:window_size]
+    window = window_flat.reshape((2, NUM_PIANO_KEYS, slots))
+
+    beat_position = obs[window_size : window_size + steps_per_beat]
+    tempo = float(obs[window_size + steps_per_beat])
+
+    return window, beat_position, tempo
+
+
 class PianoFreeKeysEnv(gym.Env):
+
     """Gymnasium environment for free-keys piano practice.
 
     In this environment, physical hands and fingers are not modeled yet. The
@@ -140,8 +171,12 @@ class PianoFreeKeysEnv(gym.Env):
         if seed is not None:
             self._rng = random.Random(seed)
 
-        # Pick a random score from available pool
-        self.current_score = self._rng.choice(self.scores)
+        # Pick piece: specific index if requested, otherwise random choice
+        if options and "piece_index" in options:
+            piece_idx = options["piece_index"]
+            self.current_score = self.scores[piece_idx]
+        else:
+            self.current_score = self._rng.choice(self.scores)
         self.window_engine = ScoreWindow(
             self.current_score,
             n_beats=self.n_beats,

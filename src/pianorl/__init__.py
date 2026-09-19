@@ -6,7 +6,14 @@ from pianorl.score import (
     ScoreWindow,
     generate_score,
 )
-from pianorl.env import PianoFreeKeysEnv, RewardConfig
+from pianorl.env import PianoFreeKeysEnv, RewardConfig, split_observation
+from pianorl.eval import (
+    RandomPlayer,
+    DoNothingPlayer,
+    RuleBasedPlayer,
+    EvaluationMetrics,
+    compute_metrics,
+)
 
 __all__ = [
     "Score",
@@ -17,4 +24,10 @@ __all__ = [
     "generate_score",
     "PianoFreeKeysEnv",
     "RewardConfig",
+    "split_observation",
+    "RandomPlayer",
+    "DoNothingPlayer",
+    "RuleBasedPlayer",
+    "EvaluationMetrics",
+    "compute_metrics",
 ]
