@@ -200,3 +200,12 @@ Do not skip milestone 2. If the agent can't learn the easy version, the harder v
 - [ ] Visual player: pygame or HTML/CSS with Tone.js?
 - [ ] Main dataset: procedural only at first, or mix in quantized real pieces from the start?
 - [ ] Time resolution: 16th notes only, or support triplets from the start?
+
+## 15. Decisions made
+
+1. **Free-keys Action Space (Milestone 2):**
+   - Single-key action space: `Discrete(89)`. Action `0` means "press nothing" (rest). Actions `1` through `88` strike piano keys 1 to 88 (MIDI pitches 21 through 108).
+   - Because early practice pieces are strictly single-line melodies (one note at a time), striking at most one key per step simplifies learning. Note-holding is not modeled yet (only note onset/start timing counts). Complex hand/finger kinematics will be introduced in subsequent milestones.
+2. **Time Resolution:**
+   - 16th-note time slices (`steps_per_beat = 4`). Each step corresponds to a quarter of a beat, providing fine enough resolution for musical timing while keeping computational load light on CPU.
+
