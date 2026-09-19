@@ -1,0 +1,34 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Virtual environments (root only)
+/.venv/
+/venv/
+/env/
+/ENV/
+
+# Training outputs, checkpoints, and logs (root only)
+/runs/
+/checkpoints/
+/logs/
+*.tfevents.*
+
+# Large data files and audio/archive files
+*.tar
+*.tar.gz
+*.zip
+*.7z
+*.rar
+*.wav
+*.mp3
+*.flac
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
