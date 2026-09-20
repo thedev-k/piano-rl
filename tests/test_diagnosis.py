@@ -3,10 +3,16 @@ import json
 from pathlib import Path
 import pytest
 
-from pianorl.env import PianoFreeKeysEnv, RewardConfig
-from pianorl.eval.diagnosis import categorize_wrong_press, DiagnosisStats
+from pianorl.env import PianoFreeKeysEnv, RewardConfig, split_observation
+from pianorl.eval.diagnosis import (
+    categorize_wrong_press,
+    DiagnosisStats,
+    get_semitone_distance,
+    get_window_slot_category,
+)
 from scripts.train import make_env, train
 from pianorl.score import Score, NoteEvent
+import numpy as np
 
 
 def test_categorize_wrong_press_repeat():
@@ -128,3 +134,100 @@ def test_train_saves_reward_config_json(tmp_path: Path):
     assert saved_rewards["hit_off_by_one"] == 0.8
     assert saved_rewards["wrong_press"] == -0.9
     assert saved_rewards["miss"] == -1.5
+
+
+def test_get_window_slot_category():
+    """Verify that get_window_slot_category accurately identifies the onset slot and group."""
+    # Action 40 corresponds to row 39 (pitch 60, Middle C)
+    action = 40
+    row = action - 1
+
+    # Total obs length = 2 * 88 * 16 + 4 + 1 = 2821
+    obs = np.zeros(2821, dtype=np.float32)
+
+    # 1. Not in window
+    slot, cat = get_window_slot_category(obs, action)
+    assert slot is None
+    assert cat == "not_in_window"
+
+    # 2. Test each slot group
+    test_cases = [
+        (0, "slots_0_1"),
+        (1, "slots_0_1"),
+        (2, "slots_2_3"),
+        (3, "slots_2_3"),
+        (4, "slots_4_7"),
+        (6, "slots_4_7"),
+        (7, "slots_4_7"),
+        (8, "slots_8_15"),
+        (15, "slots_8_15"),
+    ]
+
+    for target_slot, expected_cat in test_cases:
+        window_grid = np.zeros((2, 88, 16), dtype=np.float32)
+        window_grid[0, row, target_slot] = 1.0
+        obs[: 2 * 88 * 16] = window_grid.flatten()
+
+        slot, cat = get_window_slot_category(obs, action)
+        assert slot == target_slot
+        assert cat == expected_cat
+
+
+def test_get_semitone_distance():
+    """Verify semitone distance to nearest note start within 2 steps."""
+    targets = [
+        {"pitch": 60, "start_step": 10, "matched": False},
+        {"pitch": 72, "start_step": 11, "matched": False},
+    ]
+
+    # At step 10:
+    # Pitch 60 -> distance 0 (repeat)
+    assert get_semitone_distance(60, 10, targets) == 0
+
+    # Pitch 61 -> distance 1 (61 - 60)
+    assert get_semitone_distance(61, 10, targets) == 1
+
+    # Pitch 62 -> distance 2 (62 - 60)
+    assert get_semitone_distance(62, 10, targets) == 2
+
+    # Pitch 64 -> distance 4 (nearest is 60, abs(64-60)=4)
+    assert get_semitone_distance(64, 10, targets) == 4
+
+    # Pitch 71 -> distance 1 (nearest is 72 at step 11, abs(71-72)=1)
+    assert get_semitone_distance(71, 10, targets) == 1
+
+    # At step 20 (> 2 steps from all targets):
+    assert get_semitone_distance(60, 20, targets) is None
+
+
+def test_refined_diagnosis_stats_properties():
+    """Verify percentage calculations for refined window and semitone distance properties."""
+    stats = DiagnosisStats(
+        total_notes=10,
+        total_presses=10,
+        wrong_repeat=1,
+        wrong_key_near=3,
+        wrong_no_note=1,
+        window_slots_0_1=1,
+        window_slots_2_3=1,
+        window_slots_4_7=1,
+        window_slots_8_15=1,
+        window_not_in_window=1,
+        dist_0=1,
+        dist_1_2=2,
+        dist_3_plus=1,
+        dist_no_nearby_note=1,
+    )
+    # Total wrong = 5
+    assert stats.total_wrong == 5
+    assert pytest.approx(stats.slots_0_1_pct) == 20.0
+    assert pytest.approx(stats.slots_2_3_pct) == 20.0
+    assert pytest.approx(stats.slots_4_7_pct) == 20.0
+    assert pytest.approx(stats.slots_8_15_pct) == 20.0
+    assert pytest.approx(stats.not_in_window_pct) == 20.0
+
+    assert pytest.approx(stats.dist_1_2_pct) == 40.0
+    assert pytest.approx(stats.dist_3_plus_pct) == 20.0
+    assert pytest.approx(stats.dist_0_pct) == 20.0
+    assert pytest.approx(stats.dist_no_nearby_note_pct) == 20.0
+

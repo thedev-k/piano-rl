@@ -9,7 +9,7 @@ from pianorl.score import load_score
 
 def print_diagnosis_table(results: Dict[str, DiagnosisStats], model_path: Path, split: str) -> None:
     print("=" * 96)
-    print(f"DIAGNOSTIC ERROR BREAKDOWN: Model = {model_path.name} | Split = {split.upper()}")
+    print(f"DIAGNOSTIC ERROR OVERVIEW: Model = {model_path.name} | Split = {split.upper()}")
     print("=" * 96)
     print(
         f"{'Level':<10} | {'Wrong Total':<11} | {'Repeat':<14} | {'Wrong Key':<15} | "
@@ -29,6 +29,35 @@ def print_diagnosis_table(results: Dict[str, DiagnosisStats], model_path: Path, 
             f"{no_note_str:<15} | {st.presses_per_note:<12.2f} | {st.recall:<7.3f} | {st.precision:.3f}"
         )
     print("=" * 96)
+
+    # Refined wrong-press breakdown
+    print("\n" + "=" * 125)
+    print(f"REFINED WRONG-PRESS BREAKDOWN (Lookahead Window Slots & Semitone Distance): Split = {split.upper()}")
+    print("=" * 125)
+    print(
+        f"{'Level':<10} | {'Wrong':<7} | {'Slots 0-1':<12} | {'Slots 2-3':<12} | "
+        f"{'Slots 4-7':<12} | {'Slots 8-15':<12} | {'Not in Win':<12} | {'Dist 1-2':<12} | {'Dist >= 3'}"
+    )
+    print("-" * 125)
+
+    for name, st in results.items():
+        if name == "Overall":
+            print("-" * 125)
+        s01_str = f"{st.window_slots_0_1} ({st.slots_0_1_pct:.1f}%)"
+        s23_str = f"{st.window_slots_2_3} ({st.slots_2_3_pct:.1f}%)"
+        s47_str = f"{st.window_slots_4_7} ({st.slots_4_7_pct:.1f}%)"
+        s815_str = f"{st.window_slots_8_15} ({st.slots_8_15_pct:.1f}%)"
+        nowin_str = f"{st.window_not_in_window} ({st.not_in_window_pct:.1f}%)"
+        d12_str = f"{st.dist_1_2} ({st.dist_1_2_pct:.1f}%)"
+        d3p_str = f"{st.dist_3_plus} ({st.dist_3_plus_pct:.1f}%)"
+
+        print(
+            f"{name:<10} | {st.total_wrong:<7} | {s01_str:<12} | {s23_str:<12} | "
+            f"{s47_str:<12} | {s815_str:<12} | {nowin_str:<12} | {d12_str:<12} | {d3p_str}"
+        )
+    print("=" * 125)
+    print("  * Window Slots: Where the pressed key appears as a note start in the agent's 16-slot lookahead window.")
+    print("  * Semitone Dist: Distance in pitch to nearest note starting within +-2 steps (Dist 0 = repeat; remaining = no note nearby).\n")
 
 
 def main():
