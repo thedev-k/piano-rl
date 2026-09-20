@@ -53,8 +53,10 @@ class PPOPlayer:
 
     def __init__(self, model_path):
         from stable_baselines3 import PPO
+        from pianorl.agent import PitchConvPolicy
 
-        self.model = PPO.load(str(model_path), device="cpu")
+        custom_objects = {"PitchConvPolicy": PitchConvPolicy}
+        self.model = PPO.load(str(model_path), device="cpu", custom_objects=custom_objects)
 
     def act(self, observation: np.ndarray) -> int:
         action, _states = self.model.predict(observation, deterministic=True)

@@ -16,10 +16,17 @@ python scripts/generate_dataset.py
    .\.venv\Scripts\Activate.ps1
    ```
 
-2. **Start the Level 1 training run (300,000 timesteps on CPU):**
-   ```powershell
-   python scripts/train.py --levels 1 --timesteps 300000 --run-name level1_run
-   ```
+2. **Start a training run (300,000 timesteps on CPU):**
+   - **Shared Pitch-Convolution brain (`pitch_conv` - Recommended):**
+     Learns one shared note-reading rule across all 88 keys using 1D convolution (~49k parameters):
+     ```powershell
+     python scripts/train.py --policy pitch_conv --levels 1 --timesteps 300000 --run-name level1_pitch_conv
+     ```
+   - **Standard Multilayer Perceptron brain (`mlp` - Baseline):**
+     Treats all piano keys independently with separate weights (~750k parameters):
+     ```powershell
+     python scripts/train.py --policy mlp --levels 1 --timesteps 300000 --run-name level1_mlp
+     ```
 
 3. **Open TensorBoard to view live learning curves:**
    ```powershell

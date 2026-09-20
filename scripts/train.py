@@ -11,6 +11,7 @@ from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
+from pianorl.agent import PitchConvPolicy
 from pianorl.env import PianoFreeKeysEnv, RewardConfig
 from pianorl.score import Score, load_score
 
@@ -114,6 +115,7 @@ def train(
     off_by_one_reward: float = 0.5,
     wrong_press_penalty: float = -0.5,
     miss_penalty: float = -1.0,
+    policy: str = "mlp",
 ) -> Path:
     data_dir = Path("data")
     manifest_path = data_dir / "manifest.json"
@@ -157,26 +159,64 @@ def train(
             indent=2,
         )
 
-    # Model architecture: 2 layers of 256 units
-    policy_kwargs = dict(net_arch=dict(pi=[256, 256], vf=[256, 256]))
+    # Save run configuration (including policy architecture used)
+    run_config_path = checkpoints_dir / "run_config.json"
+    with open(run_config_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "policy": policy,
+                "levels": levels,
+                "timesteps": timesteps,
+                "learning_rate": learning_rate,
+                "ent_coef": ent_coef,
+                "n_steps": n_steps,
+                "batch_size": batch_size,
+                "seed": seed,
+                "n_envs": n_envs,
+            },
+            f,
+            indent=2,
+        )
+
+    # Policy architecture selection
+    if policy == "pitch_conv":
+        policy_class = PitchConvPolicy
+        policy_kwargs = {}
+        print("Using policy: PitchConvPolicy (1D shared pitch convolution across 88 keys)")
+    elif policy == "mlp":
+        policy_class = "MlpPolicy"
+        policy_kwargs = dict(net_arch=dict(pi=[256, 256], vf=[256, 256]))
+        print("Using policy: MlpPolicy (standard MLP: [256, 256])")
+    else:
+        raise ValueError(f"Unknown policy '{policy}'. Must be 'mlp' or 'pitch_conv'.")
 
     if resume_from:
         resume_path = Path(resume_from)
         if not resume_path.exists():
             raise FileNotFoundError(f"Model to resume from not found at '{resume_path}'")
         print(f"Resuming training from existing checkpoint: {resume_path}")
-        model = PPO.load(
+        resumed_model = PPO.load(
             str(resume_path),
             env=env,
             device="cpu",
+            custom_objects={"PitchConvPolicy": PitchConvPolicy},
             tensorboard_log=str(runs_dir),
             learning_rate=learning_rate,
             ent_coef=ent_coef,
         )
+        resumed_is_conv = isinstance(resumed_model.policy, PitchConvPolicy)
+        resumed_type = "pitch_conv" if resumed_is_conv else "mlp"
+        if resumed_type != policy:
+            raise ValueError(
+                f"Cannot resume training: Checkpoint '{resume_path}' was trained with policy '{resumed_type}', "
+                f"but current run was configured with --policy '{policy}'."
+            )
+        model = resumed_model
     else:
-        print("Creating new PPO agent (MLP: [256, 256], ent_coef=0.01)...")
+        policy_name = policy_class if isinstance(policy_class, str) else policy_class.__name__
+        print(f"Creating new PPO agent ({policy_name}, ent_coef={ent_coef})...")
         model = PPO(
-            "MlpPolicy",
+            policy_class,
             env=env,
             policy_kwargs=policy_kwargs,
             learning_rate=learning_rate,
@@ -321,6 +361,13 @@ def main():
         default=-1.0,
         help="Penalty (negative float) for letting a note pass unplayed (default: -1.0)",
     )
+    parser.add_argument(
+        "--policy",
+        type=str,
+        choices=["mlp", "pitch_conv"],
+        default="mlp",
+        help="Policy architecture: 'mlp' (default) or 'pitch_conv' (1D shared pitch conv)",
+    )
 
     args = parser.parse_args()
 
@@ -339,6 +386,7 @@ def main():
         off_by_one_reward=args.off_by_one_reward,
         wrong_press_penalty=args.wrong_press_penalty,
         miss_penalty=args.miss_penalty,
+        policy=args.policy,
     )
 
 
