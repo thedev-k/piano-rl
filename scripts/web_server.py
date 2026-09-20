@@ -65,13 +65,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     "start_beat": n.start_beat,
                     "duration_beats": n.duration_beats,
                     "pitch": n.pitch,
-                    "velocity": n.velocity
+                    "velocity": 0.8
                 }
                 for n in score.notes
             ]
             await websocket.send_json({
                 "type": "init",
-                "tempo": env.tempo,
+                "tempo": env.current_score.tempo_bpm,
                 "notes": notes_data,
                 "total_beats": score.total_beats
             })
@@ -121,7 +121,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 prev_wrong = info["wrong_presses"]
                 
                 # Calculate sleep time
-                base_sleep = 60.0 / env.tempo / 4.0
+                base_sleep = 60.0 / env.current_score.tempo_bpm / 4.0
                 actual_sleep = base_sleep / playback_speed
                 await asyncio.sleep(actual_sleep)
                 
