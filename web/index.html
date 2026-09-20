@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Piano-RL Live Player</title>
+    <!-- Include Tone.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #222; color: #eee; margin: 0; padding: 20px; }
+        .controls { margin-bottom: 20px; }
+        .stats { margin-bottom: 20px; font-size: 1.2em; }
+        .stats span { margin: 0 15px; }
+        .hit { color: #4caf50; }
+        .wrong { color: #f44336; }
+        .miss { color: #ff9800; }
+        
+        #piano-container {
+            position: relative;
+            margin: 0 auto;
+            border: 1px solid #444;
+            background: #111;
+        }
+        
+        #roll {
+            position: relative;
+            height: 300px;
+            overflow: hidden;
+            background: #111;
+            border-bottom: 2px solid #444;
+        }
+        
+        .note-bar {
+            position: absolute;
+            background: #2196F3;
+            border-radius: 4px;
+            width: 12px;
+        }
+        
+        #keyboard {
+            display: flex;
+            justify-content: center;
+            height: 120px;
+            position: relative;
+            background: #000;
+        }
+        
+        .key {
+            box-sizing: border-box;
+            border: 1px solid #000;
+            position: absolute;
+        }
+        
+        .white-key {
+            width: 22px;
+            height: 120px;
+            background: white;
+            z-index: 1;
+            bottom: 0;
+            border-radius: 0 0 3px 3px;
+        }
+        
+        .black-key {
+            width: 14px;
+            height: 70px;
+            background: black;
+            z-index: 2;
+            top: 0;
+            border-radius: 0 0 2px 2px;
+        }
+        
+        .key.active-exact { background: #4caf50 !important; }
+        .key.active-off { background: #8bc34a !important; }
+        .key.active-wrong { background: #f44336 !important; }
+        
+        select, button {
+            font-size: 16px;
+            padding: 5px 10px;
+            margin: 0 5px;
+            background: #333;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover { background: #444; }
+    </style>
+</head>
+<body>
+    <h1>Piano-RL Live Player</h1>
+    <div class="controls">
+        <select id="file-select"></select>
+        <button id="btn-play">Play</button>
+        <button id="btn-stop">Stop</button>
+        <select id="speed-select">
+            <option value="0.5">0.5x Speed</option>
+            <option value="1.0" selected>1x Speed</option>
+            <option value="2.0">2x Speed</option>
+        </select>
+    </div>
+    
+    <div class="stats">
+        <span class="hit">Hits: <span id="stat-hits">0</span></span>
+        <span class="wrong">Wrong: <span id="stat-wrong">0</span></span>
+        <span class="miss">Misses: <span id="stat-misses">0</span></span>
+        <span>Total Notes: <span id="stat-total">0</span></span>
+    </div>
+
+    <div id="piano-container">
+        <div id="roll"></div>
+        <div id="keyboard"></div>
+    </div>
+
+    <script>
+        const MIN_PITCH = 21;
+        const MAX_PITCH = 108;
+        
+        const keyboard = document.getElementById('keyboard');
+        const keys = {}; 
+        
+        const isBlack = (pitch) => {
+            const m = pitch % 12;
+            return m === 1 || m === 3 || m === 6 || m === 8 || m === 10;
+        };
+        
+        const whiteWidth = 22;
+        const blackWidth = 14;
+        let currentX = 0;
+        const pitchToX = {};
+        
+        for (let p = MIN_PITCH; p <= MAX_PITCH; p++) {
+            const key = document.createElement('div');
+            key.className = 'key ' + (isBlack(p) ? 'black-key' : 'white-key');
+            
+            if (!isBlack(p)) {
+                key.style.left = currentX + 'px';
+                pitchToX[p] = currentX + (whiteWidth / 2) - 6; 
+                currentX += whiteWidth;
+            } else {
+                key.style.left = (currentX - blackWidth / 2) + 'px';
+                pitchToX[p] = currentX - (blackWidth / 2) + (blackWidth / 2) - 6;
+            }
+            keys[p] = key;
+            keyboard.appendChild(key);
+        }
+        
+        keyboard.style.width = currentX + 'px';
+        document.getElementById('piano-container').style.width = currentX + 'px';
+
+        const synth = new Tone.PolySynth(Tone.Synth).toDestination();
+
+        let ws;
+        const roll = document.getElementById('roll');
+        let currentNotes = [];
+        let currentBeat = 0;
+        let tempo = 60;
+        let playing = false;
+        
+        async function connect() {
+            const response = await fetch('/api/files');
+            const files = await response.json();
+            const select = document.getElementById('file-select');
+            files.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f.path;
+                opt.textContent = `${f.folder} / ${f.name}`;
+                select.appendChild(opt);
+            });
+            
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === 'init') {
+                    tempo = data.tempo;
+                    currentNotes = data.notes;
+                    currentBeat = 0;
+                    roll.innerHTML = '';
+                    
+                    currentNotes.forEach((note, i) => {
+                        const bar = document.createElement('div');
+                        bar.className = 'note-bar';
+                        bar.style.left = pitchToX[note.pitch] + 'px';
+                        bar.id = 'note-' + i;
+                        roll.appendChild(bar);
+                    });
+                    
+                    playing = true;
+                    requestAnimationFrame(updateRoll);
+                    
+                    // Reset stats
+                    document.getElementById('stat-hits').textContent = '0';
+                    document.getElementById('stat-wrong').textContent = '0';
+                    document.getElementById('stat-misses').textContent = '0';
+                    document.getElementById('stat-total').textContent = '0';
+                    
+                } else if (data.type === 'step') {
+                    currentBeat = data.beat;
+                    
+                    document.getElementById('stat-hits').textContent = data.metrics.hits;
+                    document.getElementById('stat-wrong').textContent = data.metrics.wrong_presses;
+                    document.getElementById('stat-misses').textContent = data.metrics.missed_notes;
+                    document.getElementById('stat-total').textContent = data.metrics.total_notes;
+                    
+                    if (data.pitch) {
+                        const p = data.pitch;
+                        const k = keys[p];
+                        if (k) {
+                            k.classList.add(data.result === 'wrong' ? 'active-wrong' : 'active-exact');
+                            setTimeout(() => {
+                                k.classList.remove('active-wrong', 'active-exact');
+                            }, 100);
+                        }
+                        if (Tone.context.state !== 'running') {
+                            Tone.start();
+                        }
+                        const freq = Tone.Frequency(p, "midi").toFrequency();
+                        synth.triggerAttackRelease(freq, "16n");
+                    }
+                } else if (data.type === 'done' || data.type === 'error') {
+                    playing = false;
+                }
+            };
+        }
+        
+        function updateRoll() {
+            if (!playing) return;
+            
+            const beatsToShow = 5; 
+            const pxPerBeat = 300 / beatsToShow; 
+            
+            currentNotes.forEach((note, i) => {
+                const bar = document.getElementById('note-' + i);
+                if (!bar) return;
+                const distanceBeats = note.start_beat - currentBeat;
+                
+                if (distanceBeats < -note.duration_beats || distanceBeats > beatsToShow) {
+                    bar.style.display = 'none';
+                } else {
+                    bar.style.display = 'block';
+                    bar.style.bottom = (distanceBeats * pxPerBeat) + 'px';
+                    bar.style.height = (note.duration_beats * pxPerBeat) + 'px';
+                }
+            });
+            
+            requestAnimationFrame(updateRoll);
+        }
+
+        document.getElementById('btn-play').addEventListener('click', async () => {
+            await Tone.start();
+            const file = document.getElementById('file-select').value;
+            ws.send(JSON.stringify({action: 'play', file: file}));
+        });
+        
+        document.getElementById('btn-stop').addEventListener('click', () => {
+            ws.send(JSON.stringify({action: 'stop'}));
+            playing = false;
+        });
+        
+        document.getElementById('speed-select').addEventListener('change', (e) => {
+            ws.send(JSON.stringify({action: 'speed', value: parseFloat(e.target.value)}));
+        });
+
+        window.onload = connect;
+    </script>
+</body>
+</html>

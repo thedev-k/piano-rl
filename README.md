@@ -54,6 +54,14 @@ Every wrong key press is categorized into exactly one of three simple groups:
 
 The tool also reports **Presses/Note** (how many keys the model pressed per note, where 1.0 is ideal), **Recall**, and **Precision**.
 
+## Web Player
+
+To see the agent play live in your browser:
+```bash
+python scripts/web_server.py --model-path checkpoints/all_pitch_conv/final.zip
+```
+Then open `http://localhost:8000` in your web browser.
+
 ## Customizing Training Rewards
 
 You can adjust the reward and penalty numbers from the command line in `scripts/train.py`:
