@@ -6,39 +6,142 @@
     <!-- Include Tone.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #222; color: #eee; margin: 0; padding: 20px; }
-        .controls { margin-bottom: 20px; }
-        .stats { margin-bottom: 20px; font-size: 1.2em; }
-        .stats span { margin: 0 15px; }
-        .hit { color: #4caf50; }
-        .wrong { color: #f44336; }
-        .miss { color: #ff9800; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            text-align: center; 
+            background: #181818; 
+            color: #eee; 
+            margin: 0; 
+            padding: 20px; 
+        }
+        h1 { margin-top: 0; margin-bottom: 12px; font-size: 26px; }
+        .controls { 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            flex-wrap: wrap; 
+            gap: 10px; 
+            margin-bottom: 14px; 
+        }
+        
+        select, button {
+            font-size: 15px;
+            padding: 7px 14px;
+            background: #2a2a2a;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        select:hover, button:hover { background: #3a3a3a; border-color: #777; }
+        
+        #btn-play { background: #2e7d32; border-color: #4caf50; font-weight: bold; }
+        #btn-play:hover { background: #388e3c; }
+        #btn-stop { background: #c62828; border-color: #ef5350; font-weight: bold; }
+        #btn-stop:hover { background: #d32f2f; }
+        #btn-upload { background: #1565c0; border-color: #42a5f5; font-weight: bold; }
+        #btn-upload:hover { background: #1976d2; }
+        
+        .checkbox-container {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 15px;
+            background: #252525;
+            padding: 6px 12px;
+            border-radius: 5px;
+            border: 1px solid #444;
+            cursor: pointer;
+            user-select: none;
+        }
+        .checkbox-container input { cursor: pointer; transform: scale(1.2); }
+        
+        #piece-info-box {
+            background: #222;
+            border: 1px solid #3d3d3d;
+            border-radius: 8px;
+            max-width: 1144px;
+            margin: 0 auto 12px auto;
+            padding: 10px 16px;
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        .info-item { display: inline-block; margin: 2px 10px; }
+        .info-label { color: #888; margin-right: 4px; }
+        .info-val { color: #4fc3f7; font-weight: 600; }
+        
+        #melody-notice {
+            max-width: 1144px;
+            margin: 0 auto 12px auto;
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 14px;
+            display: none;
+            text-align: center;
+        }
+        .notice-warn { background: #3e2723; border: 1px solid #ff7043; color: #ffccbc; }
+        .notice-info { background: #1a237e; border: 1px solid #5c6bc0; color: #c5cae9; }
+        .notice-ok { background: #1b5e20; border: 1px solid #81c784; color: #e8f5e9; }
+        
+        .stats { 
+            margin-bottom: 12px; 
+            font-size: 1.15em; 
+            display: flex;
+            justify-content: center;
+            gap: 25px;
+        }
+        .stat-card {
+            background: #222;
+            padding: 6px 14px;
+            border-radius: 6px;
+            border: 1px solid #333;
+        }
+        .hit { color: #4caf50; font-weight: bold; }
+        .wrong { color: #f44336; font-weight: bold; }
+        .miss { color: #ff9800; font-weight: bold; }
+        .total { color: #bbb; }
         
         #piano-container {
             position: relative;
             margin: 0 auto;
-            border: 1px solid #444;
+            border: 2px solid #3a3a3a;
+            border-radius: 6px;
             background: #111;
-        }
-        
-        #roll {
-            position: relative;
-            height: 300px;
             overflow: hidden;
-            background: #111;
-            border-bottom: 2px solid #444;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.6);
         }
         
-        .note-bar {
+        #drop-overlay {
             position: absolute;
-            background: #2196F3;
-            border-radius: 4px;
-            width: 12px;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(21, 101, 192, 0.85);
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            border: 4px dashed #90caf9;
+            box-sizing: border-box;
+            pointer-events: none;
+        }
+        
+        #roll-canvas {
+            display: block;
+            background: #121212;
+            border-bottom: 2px solid #333;
         }
         
         #keyboard {
             display: flex;
-            justify-content: center;
             height: 120px;
             position: relative;
             background: #000;
@@ -48,12 +151,13 @@
             box-sizing: border-box;
             border: 1px solid #000;
             position: absolute;
+            transition: background 0.05s;
         }
         
         .white-key {
             width: 22px;
             height: 120px;
-            background: white;
+            background: #fdfdfd;
             z-index: 1;
             bottom: 0;
             border-radius: 0 0 3px 3px;
@@ -61,52 +165,60 @@
         
         .black-key {
             width: 14px;
-            height: 70px;
-            background: black;
+            height: 72px;
+            background: #111;
             z-index: 2;
             top: 0;
-            border-radius: 0 0 2px 2px;
+            border-radius: 0 0 3px 3px;
         }
         
         .key.active-exact { background: #4caf50 !important; }
         .key.active-off { background: #8bc34a !important; }
         .key.active-wrong { background: #f44336 !important; }
-        
-        select, button {
-            font-size: 16px;
-            padding: 5px 10px;
-            margin: 0 5px;
-            background: #333;
-            color: white;
-            border: 1px solid #555;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        button:hover { background: #444; }
     </style>
 </head>
 <body>
     <h1>Piano-RL Live Player</h1>
+    
     <div class="controls">
         <select id="file-select"></select>
-        <button id="btn-play">Play</button>
-        <button id="btn-stop">Stop</button>
+        <button id="btn-play">▶ Play</button>
+        <button id="btn-stop">⏹ Stop</button>
         <select id="speed-select">
             <option value="0.5">0.5x Speed</option>
-            <option value="1.0" selected>1x Speed</option>
-            <option value="2.0">2x Speed</option>
+            <option value="1.0" selected>1.0x Speed</option>
+            <option value="2.0">2.0x Speed</option>
         </select>
+        <button id="btn-upload">📂 Load MIDI file</button>
+        <input type="file" id="file-input" accept=".mid,.midi">
+        <label class="checkbox-container" title="If enabled, drops chords and lower tracks to keep only the highest melody note.">
+            <input type="checkbox" id="chk-melody">
+            Melody only
+        </label>
     </div>
     
+    <div id="piece-info-box">
+        <div class="info-item"><span class="info-label">Notes:</span><span id="info-notes" class="info-val">-</span></div>
+        <div class="info-item"><span class="info-label">Length:</span><span id="info-length" class="info-val">-</span></div>
+        <div class="info-item"><span class="info-label">Tempo:</span><span id="info-tempo" class="info-val">-</span></div>
+        <div class="info-item"><span class="info-label">Range:</span><span id="info-range" class="info-val">-</span></div>
+        <div class="info-item"><span class="info-label">Shortest:</span><span id="info-shortest" class="info-val">-</span></div>
+        <div class="info-item"><span class="info-label">Chords:</span><span id="info-chords" class="info-val">-</span></div>
+        <div class="info-item"><span class="info-label">16th-Rounded:</span><span id="info-rounded" class="info-val">-</span></div>
+    </div>
+    
+    <div id="melody-notice"></div>
+
     <div class="stats">
-        <span class="hit">Hits: <span id="stat-hits">0</span></span>
-        <span class="wrong">Wrong: <span id="stat-wrong">0</span></span>
-        <span class="miss">Misses: <span id="stat-misses">0</span></span>
-        <span>Total Notes: <span id="stat-total">0</span></span>
+        <div class="stat-card">Hits: <span id="stat-hits" class="hit">0</span></div>
+        <div class="stat-card">Wrong: <span id="stat-wrong" class="wrong">0</span></div>
+        <div class="stat-card">Misses: <span id="stat-misses" class="miss">0</span></div>
+        <div class="stat-card">Total Notes: <span id="stat-total" class="total">0</span></div>
     </div>
 
     <div id="piano-container">
-        <div id="roll"></div>
+        <div id="drop-overlay">🎵 Drop MIDI file here to load</div>
+        <canvas id="roll-canvas" width="1144" height="300"></canvas>
         <div id="keyboard"></div>
     </div>
 
@@ -115,6 +227,8 @@
         const MAX_PITCH = 108;
         
         const keyboard = document.getElementById('keyboard');
+        const rollCanvas = document.getElementById('roll-canvas');
+        const ctx = rollCanvas.getContext('2d');
         const keys = {}; 
         
         const isBlack = (pitch) => {
@@ -144,27 +258,230 @@
         }
         
         keyboard.style.width = currentX + 'px';
+        rollCanvas.width = currentX;
         document.getElementById('piano-container').style.width = currentX + 'px';
 
         const synth = new Tone.PolySynth(Tone.Synth).toDestination();
 
         let ws;
-        const roll = document.getElementById('roll');
         let currentNotes = [];
         let currentBeat = 0;
         let tempo = 60;
         let playing = false;
-        
-        async function connect() {
+        let currentPieceData = null;
+
+        const fileSelect = document.getElementById('file-select');
+        const chkMelody = document.getElementById('chk-melody');
+        const melodyNotice = document.getElementById('melody-notice');
+
+        async function fetchPieceInfo(path) {
+            try {
+                const res = await fetch(`/api/piece-info?path=${encodeURIComponent(path)}`);
+                if (!res.ok) return;
+                currentPieceData = await res.json();
+                renderPieceInfo();
+            } catch (err) {
+                console.error("Failed to load piece info:", err);
+            }
+        }
+
+        function renderPieceInfo() {
+            if (!currentPieceData) return;
+            const isMelody = chkMelody.checked;
+            const activeInfo = isMelody ? currentPieceData.melody_info : currentPieceData.info;
+            
+            document.getElementById('info-notes').textContent = activeInfo.num_notes;
+            document.getElementById('info-length').textContent = `${activeInfo.length_beats} beats`;
+            document.getElementById('info-tempo').textContent = `${activeInfo.tempo_bpm} BPM`;
+            document.getElementById('info-range').textContent = `${activeInfo.lowest_key} → ${activeInfo.highest_key}`;
+            document.getElementById('info-shortest').textContent = `${activeInfo.shortest_note_beats} beats`;
+            document.getElementById('info-chords').textContent = activeInfo.num_chords;
+            document.getElementById('info-rounded').textContent = activeInfo.rounded_notes;
+            
+            // Notice banner logic
+            const origInfo = currentPieceData.info;
+            const dropped = currentPieceData.dropped_notes;
+            
+            if (isMelody) {
+                melodyNotice.style.display = 'block';
+                if (dropped > 0) {
+                    melodyNotice.className = 'notice-warn';
+                    melodyNotice.innerHTML = `⚠️ <b>Melody Only Active:</b> Kept top voice, dropped <b>${dropped}</b> chord/lower notes (${activeInfo.num_notes} remaining). The model can only press one key at a time.`;
+                } else {
+                    melodyNotice.className = 'notice-ok';
+                    melodyNotice.innerHTML = `✓ <b>Melody Only Active:</b> Piece is already single-line (0 notes dropped).`;
+                }
+            } else {
+                if (origInfo.num_chords > 0) {
+                    melodyNotice.style.display = 'block';
+                    melodyNotice.className = 'notice-warn';
+                    melodyNotice.innerHTML = `⚠️ <b>Notice:</b> This piece has <b>${origInfo.num_chords} chord moments</b>. Since the piano model strikes at most ONE key per step, check <b>Melody only</b> to extract the top line without misses!`;
+                } else {
+                    melodyNotice.style.display = 'none';
+                }
+            }
+        }
+
+        async function loadFiles(selectPath = null) {
             const response = await fetch('/api/files');
             const files = await response.json();
-            const select = document.getElementById('file-select');
+            fileSelect.innerHTML = '';
             files.forEach(f => {
                 const opt = document.createElement('option');
                 opt.value = f.path;
-                opt.textContent = `${f.folder} / ${f.name}`;
-                select.appendChild(opt);
+                opt.textContent = `[${f.folder}] ${f.name}`;
+                fileSelect.appendChild(opt);
             });
+            if (selectPath) {
+                fileSelect.value = selectPath;
+            }
+            if (fileSelect.value) {
+                await fetchPieceInfo(fileSelect.value);
+            }
+        }
+
+        fileSelect.addEventListener('change', () => {
+            fetchPieceInfo(fileSelect.value);
+        });
+
+        chkMelody.addEventListener('change', () => {
+            renderPieceInfo();
+        });
+
+        // Upload handling
+        const btnUpload = document.getElementById('btn-upload');
+        const fileInput = document.getElementById('file-input');
+        const dropOverlay = document.getElementById('drop-overlay');
+        const container = document.getElementById('piano-container');
+
+        btnUpload.addEventListener('click', () => fileInput.click());
+
+        fileInput.addEventListener('change', async () => {
+            if (fileInput.files.length > 0) {
+                await uploadMidiFile(fileInput.files[0]);
+                fileInput.value = '';
+            }
+        });
+
+        async function uploadMidiFile(file) {
+            if (!file.name.toLowerCase().endsWith('.mid') && !file.name.toLowerCase().endsWith('.midi')) {
+                alert('Please select a valid .mid or .midi file.');
+                return;
+            }
+            try {
+                btnUpload.textContent = 'Uploading...';
+                const response = await fetch(`/api/upload?filename=${encodeURIComponent(file.name)}`, {
+                    method: 'POST',
+                    body: file
+                });
+                if (!response.ok) {
+                    const err = await response.json();
+                    alert('Upload failed: ' + (err.detail || 'Invalid MIDI file'));
+                    return;
+                }
+                const resData = await response.json();
+                await loadFiles(resData.file.path);
+                
+                // If the uploaded piece has chords, automatically check Melody only for convenience
+                if (resData.info.num_chords > 0) {
+                    chkMelody.checked = true;
+                    renderPieceInfo();
+                }
+            } catch (err) {
+                alert('Failed to upload MIDI file: ' + err.message);
+            } finally {
+                btnUpload.textContent = '📂 Load MIDI file';
+            }
+        }
+
+        // Drag and drop listeners
+        ['dragenter', 'dragover'].forEach(eventName => {
+            window.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                dropOverlay.style.display = 'flex';
+            }, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            window.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                dropOverlay.style.display = 'none';
+            }, false);
+        });
+
+        window.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            dropOverlay.style.display = 'none';
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                await uploadMidiFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        // Canvas Piano Roll Renderer (High performance for 500+ notes)
+        function renderRoll() {
+            ctx.clearRect(0, 0, rollCanvas.width, rollCanvas.height);
+            
+            const beatsToShow = 5; 
+            const pxPerBeat = rollCanvas.height / beatsToShow; 
+            
+            // Draw subtle beat horizontal lines
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = 1;
+            const startGrid = Math.floor(currentBeat);
+            for (let b = startGrid; b <= currentBeat + beatsToShow + 1; b++) {
+                const y = rollCanvas.height - ((b - currentBeat) * pxPerBeat);
+                if (y >= 0 && y <= rollCanvas.height) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, y);
+                    ctx.lineTo(rollCanvas.width, y);
+                    ctx.stroke();
+                }
+            }
+
+            // Draw note bars
+            for (let i = 0; i < currentNotes.length; i++) {
+                const note = currentNotes[i];
+                const dist = note.start_beat - currentBeat;
+                
+                // Stop iterating once notes are beyond the lookahead window
+                if (dist > beatsToShow) break;
+                // Skip notes that have already completed scrolling past
+                if (dist < -note.duration_beats) continue;
+                
+                const x = pitchToX[note.pitch];
+                if (x === undefined) continue;
+                
+                const y = rollCanvas.height - ((dist + note.duration_beats) * pxPerBeat);
+                const h = Math.max(4, note.duration_beats * pxPerBeat);
+                
+                // Visual highlight if currently sounding
+                if (dist <= 0 && dist >= -note.duration_beats) {
+                    ctx.fillStyle = '#42a5f5';
+                    ctx.shadowColor = '#1e88e5';
+                    ctx.shadowBlur = 8;
+                } else {
+                    ctx.fillStyle = '#1976d2';
+                    ctx.shadowBlur = 0;
+                }
+                
+                // Draw note rectangle with rounded corners
+                if (ctx.roundRect) {
+                    ctx.beginPath();
+                    ctx.roundRect(x, y, 12, h, 3);
+                    ctx.fill();
+                } else {
+                    ctx.fillRect(x, y, 12, h);
+                }
+            }
+            ctx.shadowBlur = 0;
+
+            if (playing) {
+                requestAnimationFrame(renderRoll);
+            }
+        }
+
+        async function connect() {
+            await loadFiles();
             
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
@@ -175,24 +492,15 @@
                     tempo = data.tempo;
                     currentNotes = data.notes;
                     currentBeat = 0;
-                    roll.innerHTML = '';
-                    
-                    currentNotes.forEach((note, i) => {
-                        const bar = document.createElement('div');
-                        bar.className = 'note-bar';
-                        bar.style.left = pitchToX[note.pitch] + 'px';
-                        bar.id = 'note-' + i;
-                        roll.appendChild(bar);
-                    });
-                    
                     playing = true;
-                    requestAnimationFrame(updateRoll);
                     
                     // Reset stats
                     document.getElementById('stat-hits').textContent = '0';
                     document.getElementById('stat-wrong').textContent = '0';
                     document.getElementById('stat-misses').textContent = '0';
-                    document.getElementById('stat-total').textContent = '0';
+                    document.getElementById('stat-total').textContent = currentNotes.length;
+                    
+                    requestAnimationFrame(renderRoll);
                     
                 } else if (data.type === 'step') {
                     currentBeat = data.beat;
@@ -209,52 +517,40 @@
                             k.classList.add(data.result === 'wrong' ? 'active-wrong' : 'active-exact');
                             setTimeout(() => {
                                 k.classList.remove('active-wrong', 'active-exact');
-                            }, 100);
+                            }, 120);
                         }
                         if (Tone.context.state !== 'running') {
                             Tone.start();
                         }
                         const freq = Tone.Frequency(p, "midi").toFrequency();
-                        synth.triggerAttackRelease(freq, "16n");
+                        synth.triggerAttackRelease(freq, "16n", undefined, 0.8);
                     }
                 } else if (data.type === 'done' || data.type === 'error') {
                     playing = false;
+                    renderRoll();
+                    if (data.type === 'error') {
+                        alert('Playback error: ' + data.message);
+                    }
                 }
             };
-        }
-        
-        function updateRoll() {
-            if (!playing) return;
-            
-            const beatsToShow = 5; 
-            const pxPerBeat = 300 / beatsToShow; 
-            
-            currentNotes.forEach((note, i) => {
-                const bar = document.getElementById('note-' + i);
-                if (!bar) return;
-                const distanceBeats = note.start_beat - currentBeat;
-                
-                if (distanceBeats < -note.duration_beats || distanceBeats > beatsToShow) {
-                    bar.style.display = 'none';
-                } else {
-                    bar.style.display = 'block';
-                    bar.style.bottom = (distanceBeats * pxPerBeat) + 'px';
-                    bar.style.height = (note.duration_beats * pxPerBeat) + 'px';
-                }
-            });
-            
-            requestAnimationFrame(updateRoll);
         }
 
         document.getElementById('btn-play').addEventListener('click', async () => {
             await Tone.start();
-            const file = document.getElementById('file-select').value;
-            ws.send(JSON.stringify({action: 'play', file: file}));
+            const file = fileSelect.value;
+            if (!file) return;
+            const melodyOnly = chkMelody.checked;
+            ws.send(JSON.stringify({
+                action: 'play',
+                file: file,
+                melody_only: melodyOnly
+            }));
         });
         
         document.getElementById('btn-stop').addEventListener('click', () => {
             ws.send(JSON.stringify({action: 'stop'}));
             playing = false;
+            renderRoll();
         });
         
         document.getElementById('speed-select').addEventListener('change', (e) => {

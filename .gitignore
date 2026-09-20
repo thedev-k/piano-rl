@@ -32,6 +32,8 @@ __pycache__/
 !/data/train/.gitkeep
 /data/heldout/*
 !/data/heldout/.gitkeep
+/data/uploads/*
+!/data/uploads/.gitkeep
 /data/manifest.json
 /outputs/
 

@@ -69,3 +69,83 @@ def test_websocket_play():
         
         # Stop playback to end test cleanly
         websocket.send_json({"action": "stop"})
+
+def test_piece_info_endpoint():
+    """Test that /api/piece-info returns valid info for a real score."""
+    test_file = Path("data/real/twinkle_twinkle.mid")
+    if not test_file.exists():
+        pytest.skip("twinkle_twinkle.mid not found")
+
+    response = client.get(f"/api/piece-info?path={test_file}")
+    assert response.status_code == 200
+    data = response.json()
+    assert "info" in data
+    assert "melody_info" in data
+    assert "dropped_notes" in data
+    assert data["info"]["num_notes"] > 0
+    assert "lowest_key" in data["info"]
+    assert "highest_key" in data["info"]
+
+def test_upload_endpoint(tmp_path: Path):
+    """Test that /api/upload saves and validates an uploaded MIDI file."""
+    from pianorl.score import Score, NoteEvent, save_score_to_midi
+    test_score = Score(
+        notes=[
+            NoteEvent(pitch=60, start_beat=0.0, duration_beats=1.0),
+            NoteEvent(pitch=64, start_beat=0.0, duration_beats=1.0),
+            NoteEvent(pitch=67, start_beat=1.0, duration_beats=1.0),
+        ],
+        tempo_bpm=120.0,
+    )
+    midi_path = tmp_path / "custom_upload.mid"
+    save_score_to_midi(test_score, midi_path)
+    midi_bytes = midi_path.read_bytes()
+
+    response = client.post(
+        "/api/upload?filename=custom_upload.mid",
+        content=midi_bytes,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["file"]["name"] == "custom_upload.mid"
+    assert data["info"]["num_notes"] == 3
+    assert data["info"]["num_chords"] == 1
+    assert data["dropped_notes"] == 1
+
+    uploaded_file = Path(data["file"]["path"])
+    assert uploaded_file.exists()
+
+def test_websocket_play_melody_only(tmp_path: Path):
+    """Test that websocket play with melody_only=True drops lower chord notes."""
+    from pianorl.score import Score, NoteEvent, save_score_to_midi
+    chord_score = Score(
+        notes=[
+            NoteEvent(pitch=60, start_beat=0.0, duration_beats=1.0),
+            NoteEvent(pitch=67, start_beat=0.0, duration_beats=1.0),
+            NoteEvent(pitch=64, start_beat=1.0, duration_beats=1.0),
+        ],
+        tempo_bpm=120.0,
+    )
+    test_path = tmp_path / "chord_play.mid"
+    save_score_to_midi(chord_score, test_path)
+
+    class DummyPlayer:
+        def act(self, obs):
+            return 0
+            
+    import web_server
+    web_server.PLAYER = DummyPlayer()
+
+    with client.websocket_connect("/ws") as websocket:
+        websocket.send_json({"action": "play", "file": str(test_path), "melody_only": True})
+        data = websocket.receive_json()
+        assert data["type"] == "init"
+        assert data["melody_only"] is True
+        assert data["dropped_notes"] == 1
+        assert len(data["notes"]) == 2
+        assert data["notes"][0]["pitch"] == 67
+
+        step_data = websocket.receive_json()
+        assert step_data["type"] in ("step", "done")
+        websocket.send_json({"action": "stop"})
