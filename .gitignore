@@ -32,9 +32,14 @@ __pycache__/
 !/data/train/.gitkeep
 /data/heldout/*
 !/data/heldout/.gitkeep
+/data/multikey_train/*
+!/data/multikey_train/.gitkeep
+/data/multikey_heldout/*
+!/data/multikey_heldout/.gitkeep
 /data/uploads/*
 !/data/uploads/.gitkeep
 /data/manifest.json
+/data/manifest_multikey.json
 /outputs/
 
 

@@ -440,6 +440,23 @@ def generate_level_8m(rng: random.Random) -> Score:
     return Score(notes=notes, tempo_bpm=tempo)
 
 
+def _deduplicate_notes(notes: List[NoteEvent]) -> List[NoteEvent]:
+    """Merge duplicate notes with the exact same pitch and start beat (unisons).
+
+    If two procedural voices strike the exact same physical piano key at
+    the same moment, the key is pressed once; keep the longer duration.
+    """
+    notes.sort(key=lambda n: (round(n.start_beat, 4), n.pitch, -n.duration_beats))
+    deduped = []
+    seen = set()
+    for n in notes:
+        key = (n.pitch, round(n.start_beat, 4))
+        if key not in seen:
+            seen.add(key)
+            deduped.append(n)
+    return deduped
+
+
 def generate_multi_key_score(
     level: Union[int, str], seed: Optional[int] = None
 ) -> Score:
@@ -481,4 +498,7 @@ def generate_multi_key_score(
         7: generate_level_7m,
         8: generate_level_8m,
     }
-    return generators[lvl_num](rng)
+    raw_score = generators[lvl_num](rng)
+    clean_notes = _deduplicate_notes(raw_score.notes)
+    return Score(notes=clean_notes, tempo_bpm=raw_score.tempo_bpm)
+

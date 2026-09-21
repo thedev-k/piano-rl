@@ -153,8 +153,13 @@ class MultiKeyPianoEnv(gym.Env):
 
         # Setup note targets for evaluation
         self.targets = []
+        seen_targets = set()
         for note in self.current_score.notes:
             start_step = int(round(note.start_beat * self.steps_per_beat))
+            key = (note.pitch, start_step)
+            if key in seen_targets:
+                continue
+            seen_targets.add(key)
             self.targets.append(
                 {
                     "pitch": note.pitch,
