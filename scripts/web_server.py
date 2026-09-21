@@ -1,18 +1,19 @@
-"""FastAPI web server for live piano playing."""
+"""FastAPI web server for live piano playing (supports both single-key and multi-key models)."""
 
 import asyncio
 import argparse
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
+import numpy as np
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from pianorl.env import PianoFreeKeysEnv, RewardConfig
-from pianorl.eval import PPOPlayer
+from pianorl.env import PianoFreeKeysEnv, MultiKeyPianoEnv, RewardConfig
+from pianorl.eval import PPOPlayer, PerfectMultiPlayer
 from pianorl.score import Score, load_score, analyze_score, extract_melody
 
 app = FastAPI()
@@ -26,17 +27,45 @@ app.add_middleware(
 
 # Global variables to hold model state
 PLAYER = None
-DATA_DIRS = [Path("data/real"), Path("data/heldout"), Path("data/uploads")]
+DATA_DIRS = [
+    Path("data/real"),
+    Path("data/heldout"),
+    Path("data/multikey_heldout"),
+    Path("data/uploads"),
+]
+
+
+def is_player_multikey(player) -> bool:
+    """Detect whether a player outputs MultiBinary(88) actions instead of Discrete(89)."""
+    if player is None:
+        return False
+    if hasattr(player, "is_multikey"):
+        return bool(player.is_multikey)
+    if hasattr(player, "model") and hasattr(player.model, "action_space"):
+        from gymnasium.spaces import MultiBinary
+        return isinstance(player.model.action_space, MultiBinary) or (
+            hasattr(player.model.action_space, "shape")
+            and player.model.action_space.shape == (88,)
+        )
+    if isinstance(player, PerfectMultiPlayer):
+        return True
+    if "Multi" in player.__class__.__name__:
+        return True
+    return False
+
 
 @app.get("/api/files")
 def get_files():
-    """List available MIDI files."""
+    """List available MIDI files across real, heldout, multikey_heldout, and uploads."""
     files = []
     for d in DATA_DIRS:
         if d.exists():
             for f in sorted(d.glob("*.mid*")):
-                files.append({"folder": d.name, "name": f.name, "path": str(f).replace('\\', '/')})
+                files.append(
+                    {"folder": d.name, "name": f.name, "path": str(f).replace("\\", "/")}
+                )
     return files
+
 
 @app.get("/api/piece-info")
 def get_piece_info(path: str):
@@ -59,6 +88,7 @@ def get_piece_info(path: str):
         "melody_info": melody_info,
         "dropped_notes": dropped_notes,
     }
+
 
 @app.post("/api/upload")
 async def upload_file(request: Request, filename: str):
@@ -101,13 +131,14 @@ async def upload_file(request: Request, filename: str):
         "dropped_notes": dropped_notes,
     }
 
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    
+
     current_task = None
     playback_speed = 1.0
-    
+
     async def play_piece(file_path: str, melody_only: bool = False):
         nonlocal playback_speed
         try:
@@ -116,6 +147,8 @@ async def websocket_endpoint(websocket: WebSocket):
             if melody_only:
                 score, dropped_notes = extract_melody(score)
 
+            is_multikey = is_player_multikey(PLAYER)
+
             # Standard eval rewards
             standard_rewards = RewardConfig(
                 hit_exact=1.0,
@@ -123,79 +156,129 @@ async def websocket_endpoint(websocket: WebSocket):
                 wrong_press=-0.5,
                 miss=-1.0,
             )
-            env = PianoFreeKeysEnv(scores=[score], seed=42, reward_config=standard_rewards)
+
+            if is_multikey:
+                env = MultiKeyPianoEnv(
+                    scores=[score], seed=42, reward_config=standard_rewards
+                )
+            else:
+                env = PianoFreeKeysEnv(
+                    scores=[score], seed=42, reward_config=standard_rewards
+                )
+
             obs, info = env.reset(options={"piece_index": 0})
-            
+
             # Send init config
             notes_data = [
                 {
                     "start_beat": n.start_beat,
                     "duration_beats": n.duration_beats,
                     "pitch": n.pitch,
-                    "velocity": 0.8
+                    "velocity": 0.8,
                 }
                 for n in score.notes
             ]
-            await websocket.send_json({
-                "type": "init",
-                "tempo": env.current_score.tempo_bpm,
-                "notes": notes_data,
-                "total_beats": score.total_beats,
-                "melody_only": melody_only,
-                "dropped_notes": dropped_notes,
-            })
-            
+            await websocket.send_json(
+                {
+                    "type": "init",
+                    "tempo": env.current_score.tempo_bpm,
+                    "notes": notes_data,
+                    "total_beats": score.total_beats,
+                    "melody_only": melody_only,
+                    "dropped_notes": dropped_notes,
+                    "model_type": "multikey" if is_multikey else "single_key",
+                }
+            )
+
             terminated = False
             truncated = False
-            
+
             prev_hits_exact = 0
             prev_hits_off = 0
             prev_wrong = 0
-            
+
             while not (terminated or truncated):
                 step_now = env.current_step
-                action = PLAYER.act(obs)
-                obs, reward, terminated, truncated, info = env.step(action)
-                
-                pressed_pitch = None
-                result = None
-                
-                if action > 0:
-                    pressed_pitch = 20 + action
-                    if info["hits_exact"] > prev_hits_exact:
-                        result = "exact"
-                    elif info["hits_off_by_one"] > prev_hits_off:
-                        result = "off_by_one"
-                    else:
-                        result = "wrong"
-                
+                raw_action = PLAYER.act(obs)
+
+                # Process action depending on multi-key vs single-key
+                if is_multikey:
+                    act_arr = np.asarray(raw_action)
+                    pressed_pitches = [21 + i for i in range(88) if act_arr[i] > 0]
+                    env_action = act_arr
+                else:
+                    act_int = int(raw_action)
+                    pressed_pitches = [20 + act_int] if act_int > 0 else []
+                    env_action = act_int
+
+                obs, reward, terminated, truncated, info = env.step(env_action)
+
+                # Determine hit / off_by_one / wrong results
+                new_exact = info["hits_exact"] - prev_hits_exact
+                new_off = info["hits_off_by_one"] - prev_hits_off
+                new_wrong = info["wrong_presses"] - prev_wrong
+
+                overall_result = None
+                if new_exact > 0:
+                    overall_result = "exact"
+                elif new_off > 0:
+                    overall_result = "off_by_one"
+                elif new_wrong > 0:
+                    overall_result = "wrong"
+
+                # Calculate per-pitch result
+                pitch_results = {}
+                if is_multikey and pressed_pitches:
+                    for p in pressed_pitches:
+                        matched_exact = any(
+                            t["pitch"] == p and t["start_step"] == step_now
+                            for t in env.targets
+                        )
+                        if matched_exact:
+                            pitch_results[str(p)] = "exact"
+                        else:
+                            matched_off = any(
+                                t["pitch"] == p and abs(t["start_step"] - step_now) == 1
+                                for t in env.targets
+                            )
+                            pitch_results[str(p)] = "off_by_one" if matched_off else "wrong"
+                elif pressed_pitches:
+                    pitch_results[str(pressed_pitches[0])] = overall_result or "exact"
+
                 # Send step update
-                await websocket.send_json({
-                    "type": "step",
-                    "step": step_now,
-                    "beat": step_now / env.steps_per_beat,
-                    "action": int(action),
-                    "pitch": int(pressed_pitch) if pressed_pitch else None,
-                    "result": result,
-                    "metrics": {
-                        "hits": int(info["hits_exact"] + info["hits_off_by_one"]),
-                        "wrong_presses": int(info["wrong_presses"]),
-                        "missed_notes": int(info["missed_notes"]),
-                        "total_notes": int(info["total_notes"])
+                await websocket.send_json(
+                    {
+                        "type": "step",
+                        "step": step_now,
+                        "beat": step_now / env.steps_per_beat,
+                        "action": (
+                            [int(x) for x in act_arr] if is_multikey else int(env_action)
+                        ),
+                        "pitches": pressed_pitches,
+                        "pitch": pressed_pitches[0] if pressed_pitches else None,
+                        "results": pitch_results,
+                        "result": overall_result,
+                        "is_multikey": is_multikey,
+                        "metrics": {
+                            "hits": int(info["hits_exact"] + info["hits_off_by_one"]),
+                            "wrong_presses": int(info["wrong_presses"]),
+                            "missed_notes": int(info["missed_notes"]),
+                            "total_notes": int(info["total_notes"]),
+                        },
                     }
-                })
-                
+                )
+
                 prev_hits_exact = info["hits_exact"]
                 prev_hits_off = info["hits_off_by_one"]
                 prev_wrong = info["wrong_presses"]
-                
+
                 # Calculate sleep time
                 base_sleep = 60.0 / env.current_score.tempo_bpm / 4.0
                 actual_sleep = base_sleep / playback_speed
                 await asyncio.sleep(actual_sleep)
-                
+
             await websocket.send_json({"type": "done"})
-            
+
         except asyncio.CancelledError:
             # Task was cancelled (user pressed stop or played a new piece)
             pass
@@ -210,7 +293,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 if current_task and not current_task.done():
                     current_task.cancel()
                 melody_only = bool(data.get("melody_only", False))
-                current_task = asyncio.create_task(play_piece(data["file"], melody_only=melody_only))
+                current_task = asyncio.create_task(
+                    play_piece(data["file"], melody_only=melody_only)
+                )
             elif data["action"] == "stop":
                 if current_task and not current_task.done():
                     current_task.cancel()
@@ -220,8 +305,10 @@ async def websocket_endpoint(websocket: WebSocket):
         if current_task and not current_task.done():
             current_task.cancel()
 
+
 # Mount the static files at the end so API routes work
 app.mount("/", StaticFiles(directory="web", html=True), name="web")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Run the Piano-RL web player.")
@@ -229,34 +316,35 @@ def main():
         "--model-path",
         type=str,
         default="checkpoints/all_pitch_conv/final.zip",
-        help="Path to trained PPO model zip file"
+        help="Path to trained PPO model zip file",
     )
     parser.add_argument(
-        "--host",
-        type=str,
-        default="127.0.0.1",
-        help="Host IP to bind to"
+        "--host", type=str, default="127.0.0.1", help="Host IP to bind to"
     )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help="Port to bind to"
-    )
+    parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
     args = parser.parse_args()
 
     global PLAYER
     print(f"Loading model from {args.model_path}...")
     try:
         PLAYER = PPOPlayer(Path(args.model_path))
+        arch_name = (
+            "Multi-Key MultiBinary(88)"
+            if PLAYER.is_multikey
+            else "Single-Key Discrete(89)"
+        )
+        print(f"Model loaded successfully! Detected architecture: {arch_name}")
     except FileNotFoundError:
-        print(f"Warning: Model not found at {args.model_path}. Will crash if play is attempted.")
-    
+        print(
+            f"Warning: Model not found at {args.model_path}. Will crash if play is attempted."
+        )
+
     # Ensure web directory exists
     Path("web").mkdir(exist_ok=True)
-    
+
     print(f"Starting server on http://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+
 
 if __name__ == "__main__":
     main()

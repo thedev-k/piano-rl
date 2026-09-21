@@ -5,10 +5,11 @@ from fastapi.testclient import TestClient
 import sys
 import os
 from pathlib import Path
+import numpy as np
 
 # Add scripts to path to import web_server
 sys.path.insert(0, os.path.abspath("scripts"))
-from web_server import app
+from web_server import app, is_player_multikey
 
 client = TestClient(app)
 
@@ -148,4 +149,46 @@ def test_websocket_play_melody_only(tmp_path: Path):
 
         step_data = websocket.receive_json()
         assert step_data["type"] in ("step", "done")
+        websocket.send_json({"action": "stop"})
+
+
+def test_websocket_play_multikey_chords(tmp_path: Path):
+    """Test that websocket play with a multi-key model streams multiple pitches simultaneously."""
+    from pianorl.score import Score, NoteEvent, save_score_to_midi
+    from pianorl.agent import PerfectMultiPlayer
+
+    # C major triad on beat 0
+    chord_score = Score(
+        notes=[
+            NoteEvent(pitch=60, start_beat=0.0, duration_beats=1.0),
+            NoteEvent(pitch=64, start_beat=0.0, duration_beats=1.0),
+            NoteEvent(pitch=67, start_beat=0.0, duration_beats=1.0),
+        ],
+        tempo_bpm=120.0,
+    )
+    test_path = tmp_path / "multikey_chord.mid"
+    save_score_to_midi(chord_score, test_path)
+
+    import web_server
+    web_server.PLAYER = PerfectMultiPlayer()
+    assert is_player_multikey(web_server.PLAYER) is True
+
+    with client.websocket_connect("/ws") as websocket:
+        websocket.send_json({"action": "play", "file": str(test_path), "melody_only": False})
+        init_data = websocket.receive_json()
+        assert init_data["type"] == "init"
+        assert init_data["model_type"] == "multikey"
+        assert len(init_data["notes"]) == 3
+
+        # First step: perfect multi-player should strike all 3 chord notes [60, 64, 67]
+        step_data = websocket.receive_json()
+        assert step_data["type"] == "step"
+        assert step_data["is_multikey"] is True
+        assert "pitches" in step_data
+        assert set(step_data["pitches"]) == {60, 64, 67}
+        assert step_data["result"] == "exact"
+        assert step_data["results"]["60"] == "exact"
+        assert step_data["results"]["64"] == "exact"
+        assert step_data["results"]["67"] == "exact"
+
         websocket.send_json({"action": "stop"})

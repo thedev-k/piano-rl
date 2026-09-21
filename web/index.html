@@ -306,7 +306,7 @@
                 melodyNotice.style.display = 'block';
                 if (dropped > 0) {
                     melodyNotice.className = 'notice-warn';
-                    melodyNotice.innerHTML = `⚠️ <b>Melody Only Active:</b> Kept top voice, dropped <b>${dropped}</b> chord/lower notes (${activeInfo.num_notes} remaining). The model can only press one key at a time.`;
+                    melodyNotice.innerHTML = `⚠️ <b>Melody Only Active:</b> Kept top voice, dropped <b>${dropped}</b> chord/lower notes (${activeInfo.num_notes} remaining).`;
                 } else {
                     melodyNotice.className = 'notice-ok';
                     melodyNotice.innerHTML = `✓ <b>Melody Only Active:</b> Piece is already single-line (0 notes dropped).`;
@@ -314,8 +314,8 @@
             } else {
                 if (origInfo.num_chords > 0) {
                     melodyNotice.style.display = 'block';
-                    melodyNotice.className = 'notice-warn';
-                    melodyNotice.innerHTML = `⚠️ <b>Notice:</b> This piece has <b>${origInfo.num_chords} chord moments</b>. Since the piano model strikes at most ONE key per step, check <b>Melody only</b> to extract the top line without misses!`;
+                    melodyNotice.className = 'notice-info';
+                    melodyNotice.innerHTML = `🎹 <b>Chord Moments Present:</b> This piece has <b>${origInfo.num_chords} chord moments</b>. (Multi-key models play full polyphony; single-key models strike at most one key per step).`;
                 } else {
                     melodyNotice.style.display = 'none';
                 }
@@ -509,21 +509,29 @@
                     document.getElementById('stat-wrong').textContent = data.metrics.wrong_presses;
                     document.getElementById('stat-misses').textContent = data.metrics.missed_notes;
                     document.getElementById('stat-total').textContent = data.metrics.total_notes;
-                    
-                    if (data.pitch) {
-                        const p = data.pitch;
-                        const k = keys[p];
-                        if (k) {
-                            k.classList.add(data.result === 'wrong' ? 'active-wrong' : 'active-exact');
-                            setTimeout(() => {
-                                k.classList.remove('active-wrong', 'active-exact');
-                            }, 120);
-                        }
+                    const pitches = data.pitches || (data.pitch ? [data.pitch] : []);
+                    const results = data.results || {};
+
+                    if (pitches.length > 0) {
+                        // 1. Light up all struck keys simultaneously on the visual keyboard
+                        pitches.forEach(p => {
+                            const k = keys[p];
+                            if (k) {
+                                const res = results[p] || data.result || 'exact';
+                                const cls = res === 'wrong' ? 'active-wrong' : (res === 'off_by_one' ? 'active-off' : 'active-exact');
+                                k.classList.add(cls);
+                                setTimeout(() => {
+                                    k.classList.remove('active-wrong', 'active-off', 'active-exact');
+                                }, 120);
+                            }
+                        });
+
+                        // 2. Play all notes simultaneously with Tone.PolySynth
                         if (Tone.context.state !== 'running') {
                             Tone.start();
                         }
-                        const freq = Tone.Frequency(p, "midi").toFrequency();
-                        synth.triggerAttackRelease(freq, "16n", undefined, 0.8);
+                        const freqs = pitches.map(p => Tone.Frequency(p, "midi").toFrequency());
+                        synth.triggerAttackRelease(freqs, "16n", undefined, 0.8);
                     }
                 } else if (data.type === 'done' || data.type === 'error') {
                     playing = false;

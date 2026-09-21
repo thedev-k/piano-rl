@@ -49,16 +49,26 @@ class PPOPlayer:
     """Fair player driven by a trained Stable-Baselines3 PPO model.
 
     Receives ONLY the observation vector and uses deterministic prediction.
+    Supports both single-key Discrete(89) and multi-key MultiBinary(88) policies.
     """
 
     def __init__(self, model_path):
         from stable_baselines3 import PPO
-        from pianorl.agent import PitchConvPolicy
+        import gymnasium as gym
+        from pianorl.agent import PitchConvPolicy, MultiKeyPitchConvPolicy
 
-        custom_objects = {"PitchConvPolicy": PitchConvPolicy}
+        custom_objects = {
+            "PitchConvPolicy": PitchConvPolicy,
+            "MultiKeyPitchConvPolicy": MultiKeyPitchConvPolicy,
+        }
         self.model = PPO.load(str(model_path), device="cpu", custom_objects=custom_objects)
+        self.is_multikey = isinstance(self.model.action_space, gym.spaces.MultiBinary) or (
+            hasattr(self.model.action_space, "shape") and self.model.action_space.shape == (88,)
+        )
 
-    def act(self, observation: np.ndarray) -> int:
+    def act(self, observation: np.ndarray):
         action, _states = self.model.predict(observation, deterministic=True)
+        if self.is_multikey:
+            return np.asarray(action, dtype=np.int8)
         return int(action)
 
