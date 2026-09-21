@@ -22,6 +22,39 @@ class DoNothingPlayer:
         return 0
 
 
+class SilentMultiPlayer:
+    """Fair baseline player that never strikes any key in MultiKeyPianoEnv."""
+
+    def __init__(self):
+        self.is_multikey = True
+
+    def act(self, observation: np.ndarray) -> np.ndarray:
+        return np.zeros(88, dtype=np.int8)
+
+    def predict(self, observation: np.ndarray, deterministic: bool = True):
+        return self.act(observation), None
+
+
+class RandomMultiPlayer:
+    """Fair baseline player that randomly strikes keys in MultiKeyPianoEnv.
+
+    By default, each key has a ~5% probability of being struck, matching the
+    prior distribution of our newborn policy network.
+    """
+
+    def __init__(self, prob: float = 0.05, seed: Optional[int] = None):
+        self.is_multikey = True
+        self.prob = prob
+        self.rng = np.random.default_rng(seed)
+
+    def act(self, observation: np.ndarray) -> np.ndarray:
+        return (self.rng.random(88) < self.prob).astype(np.int8)
+
+    def predict(self, observation: np.ndarray, deterministic: bool = True):
+        return self.act(observation), None
+
+
+
 class RuleBasedPlayer:
     """Fair baseline player that sight-reads using ONLY the incoming observation vector.
 

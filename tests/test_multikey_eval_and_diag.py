@@ -1,0 +1,145 @@
+"""Unit tests for multi-key evaluation, diagnostic error categorization, and baselines."""
+
+import json
+from pathlib import Path
+import numpy as np
+import pytest
+
+from pianorl.agent import PerfectMultiPlayer
+from pianorl.data import generate_multi_key_score
+from pianorl.eval import (
+    SilentMultiPlayer,
+    RandomMultiPlayer,
+    evaluate_multi_player,
+)
+from pianorl.eval.diagnosis_multikey import (
+    categorize_multikey_wrong_press,
+    run_multikey_diagnosis,
+)
+from scripts.eval_real_multikey import evaluate_multikey_real_piece
+from scripts.train_multikey import MultiKeyTensorboardCallback
+
+
+def test_evaluate_multi_baselines():
+    """Verify evaluation metrics across Perfect, Silent, and Random baseline players."""
+    scores = [
+        generate_multi_key_score(1, seed=10),
+        generate_multi_key_score(3, seed=30),  # contains 3-note chords
+    ]
+    items = [{"level": "1M"}, {"level": "3M"}]
+
+    # 1. Perfect player: 1.0 F1, 100% exact rate, 100% chord exact rate
+    perf_results = evaluate_multi_player(PerfectMultiPlayer(), scores, items)
+    assert perf_results["Overall"].precision == 1.0
+    assert perf_results["Overall"].recall == 1.0
+    assert perf_results["Overall"].f1 == 1.0
+    assert perf_results["Overall"].exact_rate == 1.0
+    assert perf_results["Overall"].chord_exact_rate == 1.0
+
+    # 2. Silent player: 0 hits, 0 precision, 0 recall
+    silent_results = evaluate_multi_player(SilentMultiPlayer(), scores, items)
+    assert silent_results["Overall"].precision == 0.0
+    assert silent_results["Overall"].recall == 0.0
+    assert silent_results["Overall"].f1 == 0.0
+    assert silent_results["Overall"].exact_rate == 0.0
+    assert silent_results["Overall"].mean_reward < 0.0
+
+    # 3. Random player (p=5%): achieves low precision due to extra strikes
+    random_player = RandomMultiPlayer(prob=0.05, seed=42)
+    rand_results = evaluate_multi_player(random_player, scores, items)
+    assert 0.0 <= rand_results["Overall"].precision <= 1.0
+    assert 0.0 <= rand_results["Overall"].recall <= 1.0
+
+
+def test_multikey_diagnosis_categorization():
+    """Verify the 4 wrong-press categories: repeat, neighbor_key, not_in_window, no_note_nearby."""
+    targets = [
+        {"pitch": 60, "start_step": 10},  # Middle C at step 10
+    ]
+    # Observation window where only row 39 (pitch 60) has an onset at slot 0
+    obs = np.zeros(2821, dtype=np.float32)
+    # Channel 0, key 39 (pitch 60 = 21 + 39), slot 0
+    obs[39 * 16] = 1.0
+
+    # A. Repeat: pitch 60 struck at step 11 (within +-2 steps of target)
+    cat_repeat = categorize_multikey_wrong_press(60, 11, targets, obs)
+    assert cat_repeat == "repeat"
+
+    # B. Neighbor key: pitch 61 struck at step 10 (1 semitone away from pitch 60)
+    cat_neighbor = categorize_multikey_wrong_press(61, 10, targets, obs)
+    assert cat_neighbor == "neighbor_key"
+
+    # C. Not in window: pitch 72 (not active in window or nearby)
+    cat_no_win = categorize_multikey_wrong_press(72, 10, targets, obs)
+    assert cat_no_win == "not_in_window"
+
+    # D. Put pitch 72 into window slot 8 (later in score), strike at step 10
+    obs[51 * 16 + 8] = 1.0  # row 51 = pitch 72
+    cat_no_note = categorize_multikey_wrong_press(72, 10, targets, obs)
+    assert cat_no_note == "no_note_nearby"
+
+
+def test_multikey_diagnosis_full_chords():
+    """Verify run_multikey_diagnosis measures full-chord hit rate accurately."""
+    score = generate_multi_key_score(3, seed=77)  # Triads
+    items = [{"level": "3M"}]
+
+    # Perfect player hits 100% of chords
+    diag_perfect = run_multikey_diagnosis(PerfectMultiPlayer(), [score], items)
+    assert diag_perfect["Overall"].chord_steps_total > 0
+    assert diag_perfect["Overall"].chord_steps_all_hit == diag_perfect["Overall"].chord_steps_total
+    assert diag_perfect["Overall"].full_chord_hit_rate == 1.0
+    assert diag_perfect["Overall"].total_wrong == 0
+
+    # Silent player hits 0% of chords
+    diag_silent = run_multikey_diagnosis(SilentMultiPlayer(), [score], items)
+    assert diag_silent["Overall"].chord_steps_all_hit == 0
+    assert diag_silent["Overall"].full_chord_hit_rate == 0.0
+
+
+def test_eval_real_multikey_piece():
+    """Verify evaluate_multikey_real_piece steps a score without crashing."""
+    real_file = Path("data/real/twinkle_twinkle.mid")
+    if not real_file.exists():
+        pytest.skip("data/real/twinkle_twinkle.mid not found")
+
+    from pianorl.score import load_score
+    score = load_score(real_file)
+
+    player = PerfectMultiPlayer()
+    counter, chord_cnt = evaluate_multikey_real_piece(player, score)
+    assert counter.hits_exact == counter.total_notes
+    assert counter.wrong_presses == 0
+    assert counter.missed_notes == 0
+
+
+def test_tensorboard_callback_logs_keys():
+    """Verify MultiKeyTensorboardCallback correctly averages keys pressed per step."""
+    cb = MultiKeyTensorboardCallback(log_freq=4)
+
+    # Simulate 4 steps of actions
+    actions_step1 = np.array([[1, 1, 0] + [0] * 85])  # 2 keys
+    actions_step2 = np.array([[1, 0, 0] + [0] * 85])  # 1 key
+    actions_step3 = np.array([[1, 1, 1] + [0] * 85])  # 3 keys
+    actions_step4 = np.array([[0, 0, 0] + [0] * 85])  # 0 keys
+
+    class MockLogger:
+        def __init__(self):
+            self.logged = {}
+        def record(self, key, val):
+            self.logged[key] = val
+
+    class MockModel:
+        def __init__(self, logger):
+            self.logger = logger
+            self.ep_info_buffer = []
+
+    cb.model = MockModel(MockLogger())
+
+    for act in [actions_step1, actions_step2, actions_step3, actions_step4]:
+        cb.locals = {"actions": act}
+        cb._on_step()
+
+    # Average of [2, 1, 3, 0] is 1.5
+    assert cb.model.logger.logged.get("rollout/mean_keys_pressed_per_step") == pytest.approx(1.5)
+    assert cb.model.logger.logged.get("custom/avg_keys_pressed_per_step") == pytest.approx(1.5)

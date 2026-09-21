@@ -1,5 +1,12 @@
 from .dummies import PerfectPlayer, SilentPlayer, SpamPlayer
-from .players import RandomPlayer, DoNothingPlayer, RuleBasedPlayer, PPOPlayer
+from .players import (
+    RandomPlayer,
+    DoNothingPlayer,
+    RuleBasedPlayer,
+    PPOPlayer,
+    SilentMultiPlayer,
+    RandomMultiPlayer,
+)
 from .metrics import EpisodeCounters, EvaluationMetrics, compute_metrics, aggregate_and_compute
 from .multi_key_eval import (
     MultiKeyBinaryMetrics,
@@ -19,6 +26,8 @@ __all__ = [
     "DoNothingPlayer",
     "RuleBasedPlayer",
     "PPOPlayer",
+    "SilentMultiPlayer",
+    "RandomMultiPlayer",
     "EpisodeCounters",
     "EvaluationMetrics",
     "compute_metrics",
