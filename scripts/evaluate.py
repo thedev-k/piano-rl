@@ -43,7 +43,9 @@ def evaluate_player(
     )
     env = PianoFreeKeysEnv(scores=scores_list, seed=42, reward_config=standard_rewards)
 
-    level_counters: Dict[int, List[EpisodeCounters]] = {1: [], 2: [], 3: [], 4: []}
+    level_counters: Dict[int, List[EpisodeCounters]] = {
+        lvl: [] for lvl in sorted(set(item["level"] for item in split_items))
+    }
     all_counters: List[EpisodeCounters] = []
 
     for i, item in enumerate(split_items):

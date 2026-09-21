@@ -25,9 +25,9 @@ def generate_dataset(
     manifest: List[Dict] = []
     summary_stats = []
 
-    print(f"Generating {PIECES_PER_LEVEL} unique pieces per level across 4 levels...")
+    print(f"Generating {PIECES_PER_LEVEL} unique pieces per level across 8 levels...")
 
-    for level in [1, 2, 3, 4]:
+    for level in [1, 2, 3, 4, 5, 6, 7, 8]:
         unique_scores: List[Score] = []
         seen_fingerprints: Set[Tuple] = set()
 

@@ -200,7 +200,9 @@ def run_diagnosis(
     player = PPOPlayer(model_path)
     env = PianoFreeKeysEnv(scores=scores_list, seed=42)
 
-    level_stats: Dict[int, DiagnosisStats] = {1: DiagnosisStats(), 2: DiagnosisStats(), 3: DiagnosisStats(), 4: DiagnosisStats()}
+    level_stats: Dict[int, DiagnosisStats] = {
+        lvl: DiagnosisStats() for lvl in sorted(set(item["level"] for item in split_items))
+    }
     overall_stats = DiagnosisStats()
 
     for i, item in enumerate(split_items):
