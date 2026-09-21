@@ -5,7 +5,7 @@ when comparing binary arrays of model key presses against ground-truth targets.
 """
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Union
+from typing import Dict, Iterable, List, Optional, Tuple, Union
 import numpy as np
 
 from pianorl.env.multi_keys_env import MultiKeyPianoEnv
@@ -278,3 +278,58 @@ def evaluate_multi_player(
     results["Overall"] = compute_multikey_metrics(overall_cnt, num_pieces=len(all_counters))
 
     return results
+
+
+def evaluate_multikey_real_piece(
+    player,
+    score: Score,
+    seed: int = 42,
+) -> Tuple[MultiKeyEpisodeCounters, int]:
+    """Step a multi-key player through a real MIDI piece in MultiKeyPianoEnv."""
+    standard_rewards = RewardConfig(
+        hit_exact=1.0,
+        hit_off_by_one=0.5,
+        wrong_press=-0.5,
+        miss=-1.0,
+    )
+    env = MultiKeyPianoEnv(scores=[score], seed=seed, reward_config=standard_rewards)
+    obs, info = env.reset(options={"piece_index": 0})
+
+    step_target_counts: Dict[int, int] = {}
+    for t in env.targets:
+        s = t["start_step"]
+        step_target_counts[s] = step_target_counts.get(s, 0) + 1
+
+    chord_steps_total = sum(1 for cnt in step_target_counts.values() if cnt >= 2)
+    chord_steps_exact = 0
+
+    terminated = False
+    truncated = False
+    total_reward = 0.0
+
+    while not (terminated or truncated):
+        current_step = env.current_step
+        action = player.act(obs)
+        act_arr = np.asarray(action)
+
+        if step_target_counts.get(current_step, 0) >= 2:
+            due_pitches = set(t["pitch"] for t in env.targets if t["start_step"] == current_step)
+            struck_pitches = set(21 + idx for idx in range(NUM_PIANO_KEYS) if act_arr[idx] > 0)
+            if struck_pitches == due_pitches:
+                chord_steps_exact += 1
+
+        obs, reward, terminated, truncated, info = env.step(act_arr)
+        total_reward += reward
+
+    counter = MultiKeyEpisodeCounters(
+        hits_exact=info["hits_exact"],
+        hits_off_by_one=info["hits_off_by_one"],
+        wrong_presses=info["wrong_presses"],
+        missed_notes=info["missed_notes"],
+        total_notes=info["total_notes"],
+        total_reward=total_reward,
+        chord_steps_total=chord_steps_total,
+        chord_steps_exact=chord_steps_exact,
+    )
+    return counter, chord_steps_total
+

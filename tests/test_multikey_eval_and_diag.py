@@ -11,13 +11,13 @@ from pianorl.eval import (
     SilentMultiPlayer,
     RandomMultiPlayer,
     evaluate_multi_player,
+    evaluate_multikey_real_piece,
 )
 from pianorl.eval.diagnosis_multikey import (
     categorize_multikey_wrong_press,
     run_multikey_diagnosis,
 )
-from scripts.eval_real_multikey import evaluate_multikey_real_piece
-from scripts.train_multikey import MultiKeyTensorboardCallback
+from pianorl.agent import MultiKeyTensorboardCallback
 
 
 def test_evaluate_multi_baselines():
@@ -143,3 +143,28 @@ def test_tensorboard_callback_logs_keys():
     # Average of [2, 1, 3, 0] is 1.5
     assert cb.model.logger.logged.get("rollout/mean_keys_pressed_per_step") == pytest.approx(1.5)
     assert cb.model.logger.logged.get("custom/avg_keys_pressed_per_step") == pytest.approx(1.5)
+
+
+@pytest.mark.parametrize(
+    "script_path",
+    [
+        "scripts/evaluate_multikey.py",
+        "scripts/diagnose_multikey.py",
+        "scripts/eval_real_multikey.py",
+        "scripts/train_multikey.py",
+    ],
+)
+def test_multikey_scripts_standalone_process(script_path: str):
+    """Verify scripts start as separate processes from the project root without import errors."""
+    import subprocess
+    import sys
+
+    res = subprocess.run(
+        [sys.executable, script_path, "--help"],
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0, f"{script_path} failed with returncode {res.returncode}:\n{res.stderr}"
+    assert "ModuleNotFoundError" not in res.stderr
+    assert "ImportError" not in res.stderr
+

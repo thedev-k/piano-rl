@@ -7,7 +7,7 @@ from typing import Dict
 
 from pianorl.eval.diagnosis_multikey import MultiKeyDiagnosisStats, run_multikey_diagnosis
 from pianorl.score import load_score
-from scripts.train_multikey import normalize_level_tag
+from pianorl.data import normalize_level_tag
 
 
 def print_multikey_diagnosis_table(

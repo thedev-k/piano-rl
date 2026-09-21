@@ -14,7 +14,7 @@ from pianorl.eval import (
     evaluate_multi_player,
 )
 from pianorl.score import load_score
-from scripts.train_multikey import normalize_level_tag
+from pianorl.data import normalize_level_tag
 
 
 def print_multikey_results_table(

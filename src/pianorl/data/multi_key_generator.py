@@ -457,6 +457,14 @@ def _deduplicate_notes(notes: List[NoteEvent]) -> List[NoteEvent]:
     return deduped
 
 
+def normalize_level_tag(lvl: Union[int, str]) -> str:
+    """Standardize curriculum level input (e.g., 1, '1', '1m', '1M') to '1M'."""
+    clean = str(lvl).strip().upper()
+    if not clean.endswith("M"):
+        clean += "M"
+    return clean
+
+
 def generate_multi_key_score(
     level: Union[int, str], seed: Optional[int] = None
 ) -> Score:

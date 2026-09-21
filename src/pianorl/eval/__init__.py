@@ -15,6 +15,12 @@ from .multi_key_eval import (
     compute_array_metrics,
     compute_multikey_metrics,
     evaluate_multi_player,
+    evaluate_multikey_real_piece,
+)
+from .diagnosis_multikey import (
+    MultiKeyDiagnosisStats,
+    run_multikey_diagnosis,
+    categorize_multikey_wrong_press,
 )
 from pianorl.agent.perfect_multi_player import PerfectMultiPlayer
 
@@ -39,4 +45,8 @@ __all__ = [
     "compute_array_metrics",
     "compute_multikey_metrics",
     "evaluate_multi_player",
+    "evaluate_multikey_real_piece",
+    "MultiKeyDiagnosisStats",
+    "run_multikey_diagnosis",
+    "categorize_multikey_wrong_press",
 ]

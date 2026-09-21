@@ -2,6 +2,7 @@
 
 from .multi_key_generator import (
     generate_multi_key_score,
+    normalize_level_tag,
     generate_level_1m,
     generate_level_2m,
     generate_level_3m,
@@ -14,6 +15,7 @@ from .multi_key_generator import (
 
 __all__ = [
     "generate_multi_key_score",
+    "normalize_level_tag",
     "generate_level_1m",
     "generate_level_2m",
     "generate_level_3m",
