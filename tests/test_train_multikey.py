@@ -81,3 +81,96 @@ def test_multikey_smoke_train_step(tmp_path: Path):
     assert isinstance(action, np.ndarray)
     assert action.shape == (88,)
     assert set(np.unique(action)).issubset({0, 1})
+
+
+def test_parse_level_weights():
+    """Verify level weights parsing and defaulting behavior."""
+    from scripts.train_multikey import parse_level_weights
+
+    # None or empty returns None
+    assert parse_level_weights(None) is None
+    assert parse_level_weights("") is None
+    assert parse_level_weights("   ") is None
+
+    # Valid string with whitespace
+    weights = parse_level_weights("1M: 3 , 2m : 2, 3M:1", active_levels=["1M", "2M", "3M"])
+    assert weights == {"1M": 3.0, "2M": 2.0, "3M": 1.0}
+
+    # Missing active level defaults to 1.0
+    weights_partial = parse_level_weights("1M:4", active_levels=["1M", "2M", "3M"])
+    assert weights_partial == {"1M": 4.0, "2M": 1.0, "3M": 1.0}
+
+    # Error handling
+    with pytest.raises(ValueError, match="Invalid level weight format"):
+        parse_level_weights("1M")
+
+    with pytest.raises(ValueError, match="strictly positive"):
+        parse_level_weights("1M:0")
+
+    with pytest.raises(ValueError, match="strictly positive"):
+        parse_level_weights("1M:-2")
+
+    with pytest.raises(ValueError, match="Must be a number"):
+        parse_level_weights("1M:abc")
+
+
+def test_compute_piece_sampling_weights():
+    """Verify per-piece sampling weights produce exact level probabilities."""
+    from scripts.train_multikey import compute_piece_sampling_weights
+
+    # Level 1M has 2 pieces, Level 2M has 4 pieces
+    train_items = [
+        {"level": "1M", "filename": "1.mid"},
+        {"level": "1M", "filename": "2.mid"},
+        {"level": "2M", "filename": "3.mid"},
+        {"level": "2M", "filename": "4.mid"},
+        {"level": "2M", "filename": "5.mid"},
+        {"level": "2M", "filename": "6.mid"},
+    ]
+    # Weight Level 1M with 2.0 and Level 2M with 1.0
+    level_weights = {"1M": 2.0, "2M": 1.0}
+    weights = compute_piece_sampling_weights(train_items, level_weights)
+
+    assert len(weights) == 6
+    # Level 1M pieces: 2.0 / 2 = 1.0 each
+    assert weights[0] == pytest.approx(1.0)
+    assert weights[1] == pytest.approx(1.0)
+    # Level 2M pieces: 1.0 / 4 = 0.25 each
+    assert weights[2] == pytest.approx(0.25)
+    assert weights[3] == pytest.approx(0.25)
+    assert weights[4] == pytest.approx(0.25)
+    assert weights[5] == pytest.approx(0.25)
+
+    # Sum of Level 1M weights = 2.0; Sum of Level 2M weights = 1.0
+    assert sum(weights[:2]) == pytest.approx(2.0)
+    assert sum(weights[2:]) == pytest.approx(1.0)
+
+
+def test_multikey_env_weighted_sampling():
+    """Verify MultiKeyPianoEnv samples pieces according to score_weights."""
+    from pianorl.env import MultiKeyPianoEnv
+
+    s1 = generate_multi_key_score(1, seed=1)
+    s2 = generate_multi_key_score(2, seed=2)
+
+    # Validation errors
+    with pytest.raises(ValueError, match="Length of score_weights"):
+        MultiKeyPianoEnv(scores=[s1, s2], score_weights=[1.0])
+
+    with pytest.raises(ValueError, match="strictly positive"):
+        MultiKeyPianoEnv(scores=[s1, s2], score_weights=[1.0, 0.0])
+
+    # Empirical test: score 0 has 80% weight, score 1 has 20% weight
+    env = MultiKeyPianoEnv(scores=[s1, s2], score_weights=[8.0, 2.0], seed=42)
+    counts = {0: 0, 1: 0}
+    for _ in range(500):
+        env.reset()
+        if env.current_score is s1:
+            counts[0] += 1
+        elif env.current_score is s2:
+            counts[1] += 1
+
+    prob_s1 = counts[0] / 500
+    # Expected: ~0.80. Allow reasonable statistical tolerance [0.72, 0.88]
+    assert 0.72 <= prob_s1 <= 0.88, f"Observed frequency {prob_s1:.2f} deviated too much from 0.80"
+

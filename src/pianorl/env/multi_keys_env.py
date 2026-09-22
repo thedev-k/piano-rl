@@ -47,6 +47,7 @@ class MultiKeyPianoEnv(gym.Env):
         steps_per_beat: int = 4,
         seed: Optional[int] = None,
         reward_config: Optional[RewardConfig] = None,
+        score_weights: Optional[List[float]] = None,
     ):
         super().__init__()
 
@@ -65,6 +66,18 @@ class MultiKeyPianoEnv(gym.Env):
 
         if not self.scores:
             raise ValueError("Must provide at least one Score object or file path")
+
+        if score_weights is not None:
+            if len(score_weights) != len(self.scores):
+                raise ValueError(
+                    f"Length of score_weights ({len(score_weights)}) must match "
+                    f"number of scores ({len(self.scores)})"
+                )
+            if any(w <= 0 for w in score_weights):
+                raise ValueError("All score_weights must be strictly positive")
+            self.score_weights = [float(w) for w in score_weights]
+        else:
+            self.score_weights = None
 
         self.n_beats = n_beats
         self.steps_per_beat = steps_per_beat
@@ -142,7 +155,12 @@ class MultiKeyPianoEnv(gym.Env):
             piece_idx = options["piece_index"]
             self.current_score = self.scores[piece_idx]
         else:
-            self.current_score = self._rng.choice(self.scores)
+            if self.score_weights is not None:
+                self.current_score = self._rng.choices(
+                    self.scores, weights=self.score_weights, k=1
+                )[0]
+            else:
+                self.current_score = self._rng.choice(self.scores)
 
         self.window_engine = ScoreWindow(
             self.current_score,

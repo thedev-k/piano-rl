@@ -168,3 +168,67 @@ def test_multikey_scripts_standalone_process(script_path: str):
     assert "ModuleNotFoundError" not in res.stderr
     assert "ImportError" not in res.stderr
 
+
+def test_checkpoint_step_sorting():
+    """Verify extract_checkpoint_step correctly parses step counts from filenames."""
+    from scripts.evaluate_multikey import extract_checkpoint_step
+
+    assert extract_checkpoint_step(Path("checkpoints/run/checkpoint_644800_steps.zip")) == 644800
+    assert extract_checkpoint_step(Path("checkpoints/run/checkpoint_80000_steps.zip")) == 80000
+    assert extract_checkpoint_step(Path("checkpoints/run/checkpoint_1000000_steps.zip")) == 1000000
+    assert extract_checkpoint_step(Path("checkpoints/run/final.zip")) == 999999999
+
+    paths = [
+        Path("checkpoint_800000_steps.zip"),
+        Path("checkpoint_644800_steps.zip"),
+        Path("checkpoint_964800_steps.zip"),
+        Path("final.zip"),
+    ]
+    paths.sort(key=extract_checkpoint_step)
+    assert [p.name for p in paths] == [
+        "checkpoint_644800_steps.zip",
+        "checkpoint_800000_steps.zip",
+        "checkpoint_964800_steps.zip",
+        "final.zip",
+    ]
+
+
+def test_print_checkpoint_progression_table(capsys):
+    """Verify progression summary table renders correctly without errors."""
+    from scripts.evaluate_multikey import print_checkpoint_progression_table
+    from pianorl.eval import MultiKeyEvaluationMetrics
+
+    m1 = MultiKeyEvaluationMetrics(
+        num_pieces=10,
+        total_notes=100,
+        precision=0.9,
+        recall=0.85,
+        f1=0.874,
+        exact_rate=0.8,
+        chord_exact_rate=0.95,
+        mean_reward=15.0,
+    )
+    m2 = MultiKeyEvaluationMetrics(
+        num_pieces=10,
+        total_notes=100,
+        precision=0.85,
+        recall=0.80,
+        f1=0.824,
+        exact_rate=0.75,
+        chord_exact_rate=0.88,
+        mean_reward=12.0,
+    )
+    records = [
+        {"name": "checkpoint_644800_steps", "overall": m1, "levels": {"1M": m1, "2M": m2}},
+        {"name": "checkpoint_804800_steps", "overall": m2, "levels": {"1M": m2, "2M": m1}},
+    ]
+
+    print_checkpoint_progression_table(records, ["1M", "2M"], "heldout")
+    captured = capsys.readouterr().out
+    assert "MULTI-CHECKPOINT PROGRESSION SUMMARY" in captured
+    assert "checkpoint_644800_steps" in captured
+    assert "checkpoint_804800_steps" in captured
+    assert "95.0%" in captured
+    assert "88.0%" in captured
+
+

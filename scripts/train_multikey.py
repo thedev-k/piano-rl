@@ -68,14 +68,81 @@ class PlainProgressCallback(BaseCallback):
 
 
 
+def parse_level_weights(
+    weights_str: Optional[str],
+    active_levels: Optional[List[Union[int, str]]] = None,
+) -> Optional[Dict[str, float]]:
+    """Parse a level weights string (e.g. '1M:3,2M:2,3M:1,4M:1') into a dictionary.
+
+    If active_levels is provided, any level not mentioned in weights_str defaults to 1.0.
+    """
+    if weights_str is None or not str(weights_str).strip():
+        return None
+
+    weights: Dict[str, float] = {}
+    tokens = [tok.strip() for tok in str(weights_str).split(",") if tok.strip()]
+    for token in tokens:
+        if ":" not in token:
+            raise ValueError(
+                f"Invalid level weight format '{token}'. Expected 'LEVEL:WEIGHT' (e.g. '1M:2')."
+            )
+        parts = token.split(":", 1)
+        lvl = normalize_level_tag(parts[0].strip())
+        try:
+            w = float(parts[1].strip())
+        except ValueError:
+            raise ValueError(f"Invalid weight '{parts[1]}' for level '{lvl}'. Must be a number.")
+        if w <= 0:
+            raise ValueError(f"Weight for level '{lvl}' must be strictly positive, got {w}")
+        weights[lvl] = w
+
+    if active_levels is not None:
+        normalized_active = [normalize_level_tag(lvl) for lvl in active_levels]
+        for lvl in normalized_active:
+            if lvl not in weights:
+                weights[lvl] = 1.0
+
+    return weights
+
+
+def compute_piece_sampling_weights(
+    train_items: List[Dict[str, Any]],
+    level_weights: Dict[str, float],
+) -> List[float]:
+    """Compute per-piece sampling weights so total probability per level matches level_weights.
+
+    If level L has N_L pieces and weight W_L, each piece in L gets weight W_L / N_L.
+    """
+    counts: Dict[str, int] = {}
+    for it in train_items:
+        lvl = normalize_level_tag(it["level"])
+        counts[lvl] = counts.get(lvl, 0) + 1
+
+    weights: List[float] = []
+    for it in train_items:
+        lvl = normalize_level_tag(it["level"])
+        w_level = level_weights.get(lvl, 1.0)
+        n_level = counts.get(lvl, 1)
+        weights.append(w_level / n_level)
+
+    return weights
+
+
 def make_env(
-    scores: List[Score], seed: int, rank: int, reward_config: Optional[RewardConfig] = None
+    scores: List[Score],
+    seed: int,
+    rank: int,
+    reward_config: Optional[RewardConfig] = None,
+    score_weights: Optional[List[float]] = None,
 ):
     """Factory function for vectorized environments."""
     def _init():
         torch.set_num_threads(1)
         env = MultiKeyPianoEnv(
-            scores=scores, seed=seed + rank * 1000, reward_config=reward_config
+            scores=scores,
+            seed=seed + rank * 1000,
+            reward_config=reward_config,
+            score_weights=score_weights,
         )
         env = Monitor(env)
         return env
@@ -87,7 +154,8 @@ def load_multikey_training_pieces(
     manifest_path: Path,
     levels: List[Union[int, str]],
     data_dir: Path = Path("data"),
-) -> List[Score]:
+    return_items: bool = False,
+) -> Union[List[Score], tuple[List[Score], List[Dict[str, Any]]]]:
     """Read manifest_multikey.json and load ONLY train-split pieces for the chosen levels."""
     if not manifest_path.exists():
         raise FileNotFoundError(
@@ -117,6 +185,8 @@ def load_multikey_training_pieces(
         print(f"  Level {lvl}: {count} pieces")
 
     scores = [load_score(data_dir / item["filename"]) for item in train_items]
+    if return_items:
+        return scores, train_items
     return scores
 
 
@@ -136,16 +206,39 @@ def train_multikey(
     wrong_press_penalty: float = -0.5,
     miss_penalty: float = -1.0,
     policy: str = "pitch_conv",
+    level_weights: Optional[Union[str, Dict[str, float]]] = None,
     scores_override: Optional[List[Score]] = None,
+    score_weights_override: Optional[List[float]] = None,
 ) -> Path:
     """Train a multi-key PPO model and save final checkpoint."""
     data_dir = Path("data")
     manifest_path = data_dir / "manifest_multikey.json"
 
+    target_levels = [normalize_level_tag(lvl) for lvl in levels]
+    parsed_weights = None
+    if isinstance(level_weights, str):
+        parsed_weights = parse_level_weights(level_weights, target_levels)
+    elif isinstance(level_weights, dict):
+        parsed_weights = {normalize_level_tag(k): float(v) for k, v in level_weights.items()}
+        for lvl in target_levels:
+            if lvl not in parsed_weights:
+                parsed_weights[lvl] = 1.0
+
+    score_weights: Optional[List[float]] = None
     if scores_override is not None:
         scores = scores_override
+        score_weights = score_weights_override
     else:
-        scores = load_multikey_training_pieces(manifest_path, levels, data_dir)
+        scores, train_items = load_multikey_training_pieces(
+            manifest_path, levels, data_dir, return_items=True
+        )
+        if parsed_weights is not None:
+            score_weights = compute_piece_sampling_weights(train_items, parsed_weights)
+            tot_w = sum(parsed_weights.values())
+            print("\nPer-level sampling weights active:")
+            for lvl in sorted(parsed_weights.keys()):
+                pct = (parsed_weights[lvl] / tot_w) * 100 if tot_w > 0 else 0
+                print(f"  Level {lvl}: weight {parsed_weights[lvl]:.2f} (~{pct:.1f}% chance per episode)")
 
     reward_config = RewardConfig(
         hit_exact=exact_reward,
@@ -163,10 +256,15 @@ def train_multikey(
     print(f"\nSetting up {n_envs} parallel environment(s) (CPU only, 1 thread/worker)...")
     if n_envs > 1:
         env = SubprocVecEnv(
-            [make_env(scores, seed, i, reward_config=reward_config) for i in range(n_envs)]
+            [
+                make_env(scores, seed, i, reward_config=reward_config, score_weights=score_weights)
+                for i in range(n_envs)
+            ]
         )
     else:
-        env = DummyVecEnv([make_env(scores, seed, 0, reward_config=reward_config)])
+        env = DummyVecEnv(
+            [make_env(scores, seed, 0, reward_config=reward_config, score_weights=score_weights)]
+        )
 
     # Output paths
     checkpoints_dir = Path("checkpoints") / run_name
@@ -195,6 +293,7 @@ def train_multikey(
             {
                 "policy": policy,
                 "levels": normalized_lvls,
+                "level_weights": parsed_weights,
                 "timesteps": timesteps,
                 "learning_rate": learning_rate,
                 "ent_coef": ent_coef,
@@ -372,6 +471,12 @@ def main():
         choices=["pitch_conv", "mlp"],
         help="Policy architecture: 'pitch_conv' (default) or 'mlp'.",
     )
+    parser.add_argument(
+        "--level-weights",
+        type=str,
+        default=None,
+        help="Optional sampling weights per level (e.g. '1M:3,2M:2,3M:1,4M:1'). Defaults to uniform sampling.",
+    )
 
     args = parser.parse_args()
 
@@ -389,6 +494,7 @@ def main():
         wrong_press_penalty=args.wrong_press_penalty,
         miss_penalty=args.miss_penalty,
         policy=args.policy,
+        level_weights=args.level_weights,
     )
 
 

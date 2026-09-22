@@ -3,7 +3,7 @@
 import argparse
 import json
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 from pianorl.agent import PerfectMultiPlayer
 from pianorl.eval import (
@@ -63,6 +63,63 @@ def print_baseline_comparison(
     print("=" * 95 + "\n")
 
 
+def extract_checkpoint_step(path: Path) -> int:
+    """Extract step count from checkpoint filename for chronological sorting."""
+    import re
+    stem = path.stem
+    match = re.search(r"(\d+)_steps", stem)
+    if match:
+        return int(match.group(1))
+    match_any_num = re.search(r"(\d+)", stem)
+    if match_any_num:
+        return int(match_any_num.group(1))
+    return 999_999_999  # Place final.zip or unnumbered at the end
+
+
+def print_checkpoint_progression_table(
+    records: List[Dict[str, Any]],
+    levels: List[str],
+    split_name: str,
+) -> None:
+    """Print a clean consolidated trend table comparing multiple checkpoints across levels."""
+    levels = sorted(levels)
+    col_w = 12
+    hdr = f"{'Checkpoint / Step':<30} | " + " | ".join(f"{f'{lvl} Chord':^{col_w}}" for lvl in levels)
+    hdr += f" | {'Overall F1':^10} | {'Exact Rate':^10} | {'Chord Match':^11} | {'Mean Reward':^11}"
+    border = "=" * len(hdr)
+    sub_border = "-" * len(hdr)
+
+    print("\n" + border)
+    print(f"MULTI-CHECKPOINT PROGRESSION SUMMARY (Split = {split_name.upper()})")
+    print(border)
+    print(hdr)
+    print(sub_border)
+
+    for rec in records:
+        name = rec["name"][:30]
+        lvl_chords = []
+        for lvl in levels:
+            norm_lvl = normalize_level_tag(lvl)
+            matched_key = None
+            for k in rec["levels"]:
+                clean_k = k.replace("Level", "").strip().upper()
+                if not clean_k.endswith("M"):
+                    clean_k += "M"
+                if clean_k == norm_lvl or k == lvl or k == f"Level {lvl}":
+                    matched_key = k
+                    break
+            if matched_key is not None:
+                chord_pct = f"{rec['levels'][matched_key].chord_exact_rate * 100:.1f}%"
+            else:
+                chord_pct = "N/A"
+            lvl_chords.append(f"{chord_pct:^{col_w}}")
+        ov = rec["overall"]
+        row = f"{name:<30} | " + " | ".join(lvl_chords)
+        row += f" | {ov.f1:^10.3f} | {ov.exact_rate:^10.3f} | {ov.chord_exact_rate * 100:^10.1f}% | {ov.mean_reward:^+11.2f}"
+        print(row)
+    print(border + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Evaluate multi-key PPO model and baseline players on polyphonic pieces."
@@ -71,7 +128,19 @@ def main():
         "--model-path",
         type=str,
         default=None,
-        help="Path to trained multi-key PPO model .zip file.",
+        help="Path to single trained multi-key PPO model .zip file.",
+    )
+    parser.add_argument(
+        "--model-paths",
+        nargs="+",
+        default=None,
+        help="List of model checkpoint .zip files to evaluate in sequence.",
+    )
+    parser.add_argument(
+        "--checkpoint-dir",
+        type=str,
+        default=None,
+        help="Directory containing multiple checkpoint .zip files to evaluate.",
     )
     parser.add_argument(
         "--split",
@@ -88,7 +157,7 @@ def main():
     )
     parser.add_argument(
         "--compare-baselines",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=True,
         help="Compare model against Perfect, Silent, and Random baseline players (default: True).",
     )
@@ -120,9 +189,38 @@ def main():
 
     baseline_summaries: Dict[str, MultiKeyEvaluationMetrics] = {}
 
-    # 1. Evaluate trained model if provided
+    # Collect model paths
+    candidate_paths: List[Path] = []
     if args.model_path:
-        model_file = Path(args.model_path)
+        candidate_paths.append(Path(args.model_path))
+    if args.model_paths:
+        for p in args.model_paths:
+            candidate_paths.append(Path(p))
+    if args.checkpoint_dir:
+        cdir = Path(args.checkpoint_dir)
+        if not cdir.is_dir():
+            raise FileNotFoundError(f"Checkpoint directory not found: '{cdir}'")
+        found = list(cdir.glob("*.zip"))
+        if not found:
+            raise FileNotFoundError(f"No .zip checkpoints found in '{cdir}'")
+        candidate_paths.extend(found)
+
+    # Deduplicate while preserving order, then sort by step count
+    unique_paths: List[Path] = []
+    seen = set()
+    for p in candidate_paths:
+        resolved = p.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            unique_paths.append(p)
+
+    if len(unique_paths) > 1:
+        unique_paths.sort(key=extract_checkpoint_step)
+
+    progression_records: List[Dict[str, Any]] = []
+
+    # 1. Evaluate trained models if provided
+    for model_file in unique_paths:
         if not model_file.exists():
             raise FileNotFoundError(f"Model file not found at '{model_file}'")
         print(f"\nEvaluating PPO model: {model_file.name}...")
@@ -130,9 +228,29 @@ def main():
         model_results = evaluate_multi_player(model_player, scores_list, split_items)
         print_multikey_results_table(model_results, f"PPO ({model_file.name})", args.split)
         baseline_summaries[f"PPO ({model_file.stem})"] = model_results["Overall"]
+        progression_records.append(
+            {
+                "name": model_file.stem,
+                "overall": model_results["Overall"],
+                "levels": {k: v for k, v in model_results.items() if k != "Overall"},
+            }
+        )
+
+    # Print consolidated multi-checkpoint summary table if multiple checkpoints evaluated
+    if len(progression_records) > 1:
+        eval_levels = sorted(list({normalize_level_tag(it["level"]) for it in split_items}))
+        print_checkpoint_progression_table(progression_records, eval_levels, args.split)
 
     # 2. Evaluate baselines if requested
-    if args.compare_baselines:
+    if args.compare_baselines and not unique_paths:
+        # If no models were passed, run baselines
+        run_baselines = True
+    elif args.compare_baselines:
+        run_baselines = True
+    else:
+        run_baselines = False
+
+    if run_baselines:
         print("Evaluating Perfect Sight-Reading Baseline (PerfectMultiPlayer)...")
         perfect_player = PerfectMultiPlayer()
         perf_results = evaluate_multi_player(perfect_player, scores_list, split_items)
