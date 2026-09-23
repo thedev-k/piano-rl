@@ -25,6 +25,7 @@ __pycache__/
 *.rar
 *.wav
 *.mp3
+!web/audio/**
 *.flac
 
 # Generated procedural dataset and visualization outputs

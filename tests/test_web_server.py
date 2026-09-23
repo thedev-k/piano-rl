@@ -26,6 +26,13 @@ def test_static_files():
     assert response.status_code == 200
     assert "Piano-RL Live Player" in response.text
 
+
+def test_audio_samples_served():
+    """Test that the local Salamander Grand Piano audio samples are served."""
+    response = client.get("/audio/salamander/C4.mp3")
+    assert response.status_code == 200
+    assert len(response.content) > 1000  # Non-empty audio file
+
 def test_websocket_play():
     """Test that the websocket can load a real score and start playback without crashing."""
     # Find a real midi file to test with

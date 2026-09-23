@@ -215,6 +215,7 @@
         <div class="stat-card">Misses: <span id="stat-misses" class="miss">0</span></div>
         <div class="stat-card">Total Notes: <span id="stat-total" class="total">0</span></div>
         <div class="stat-card" id="pedal-card" style="display: none;">Pedal: <span id="stat-pedal" style="color: #666; font-weight: bold;">UP</span></div>
+        <div class="stat-card">Sound: <span id="audio-source-status" style="color: #81c784; font-weight: bold;">Grand Piano (Recorded Samples)</span></div>
     </div>
 
     <div id="piano-container">
@@ -260,7 +261,7 @@
         
         keyboard.style.width = currentX + 'px';
         rollCanvas.width = currentX;
-        // Realistic acoustic piano synthesis envelope with rich harmonics
+        // Fallback acoustic synthesis envelope
         const synth = new Tone.PolySynth(Tone.Synth, {
             oscillator: {
                 type: "triangle8"
@@ -270,6 +271,59 @@
                 decay: 2.0,
                 sustain: 0.15,
                 release: 1.2
+            }
+        }).toDestination();
+
+        // Real acoustic piano: Salamander Grand Piano recorded samples (CC-BY 3.0 Alexander Holm)
+        const salamanderSamples = {
+            A0: "A0.mp3",
+            C1: "C1.mp3",
+            "D#1": "Ds1.mp3",
+            "F#1": "Fs1.mp3",
+            A1: "A1.mp3",
+            C2: "C2.mp3",
+            "D#2": "Ds2.mp3",
+            "F#2": "Fs2.mp3",
+            A2: "A2.mp3",
+            C3: "C3.mp3",
+            "D#3": "Ds3.mp3",
+            "F#3": "Fs3.mp3",
+            A3: "A3.mp3",
+            C4: "C4.mp3",
+            "D#4": "Ds4.mp3",
+            "F#4": "Fs4.mp3",
+            A4: "A4.mp3",
+            C5: "C5.mp3",
+            "D#5": "Ds5.mp3",
+            "F#5": "Fs5.mp3",
+            A5: "A5.mp3",
+            C6: "C6.mp3",
+            "D#6": "Ds6.mp3",
+            "F#6": "Fs6.mp3",
+            A6: "A6.mp3",
+            C7: "C7.mp3",
+            "D#7": "Ds7.mp3",
+            "F#7": "Fs7.mp3",
+            A7: "A7.mp3",
+            C8: "C8.mp3"
+        };
+
+        let samplerReady = false;
+        const pianoSampler = new Tone.Sampler({
+            urls: salamanderSamples,
+            baseUrl: "/audio/salamander/",
+            onload: () => {
+                samplerReady = true;
+                const statusEl = document.getElementById('audio-source-status');
+                if (statusEl) {
+                    statusEl.textContent = 'Grand Piano (Recorded Samples)';
+                    statusEl.style.color = '#81c784';
+                }
+                console.log("Salamander Grand Piano samples loaded successfully!");
+            },
+            onerror: (err) => {
+                console.warn("Failed to load local samples, falling back to CDN...", err);
+                pianoSampler.baseUrl = "https://tonejs.github.io/audio/salamander/";
             }
         }).toDestination();
 
@@ -566,15 +620,16 @@
                             }
                         });
 
-                        // 2. Play all notes simultaneously with Tone.PolySynth using true duration & velocity
+                        // 2. Play all notes simultaneously with real sampled piano (or fallback synth)
                         if (Tone.context.state !== 'running') {
                             Tone.start();
                         }
+                        const activeInstrument = (samplerReady && pianoSampler.loaded) ? pianoSampler : synth;
                         stepNotes.forEach(n => {
                             const freq = Tone.Frequency(n.pitch, "midi").toFrequency();
                             const dur = n.duration || 0.25;
                             const vel = Math.max(0.1, Math.min(1.0, n.velocity !== undefined ? n.velocity : 0.8));
-                            synth.triggerAttackRelease(freq, dur, undefined, vel);
+                            activeInstrument.triggerAttackRelease(freq, dur, undefined, vel);
                         });
                     }
                 } else if (data.type === 'done' || data.type === 'error') {
