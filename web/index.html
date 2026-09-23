@@ -214,6 +214,7 @@
         <div class="stat-card">Wrong: <span id="stat-wrong" class="wrong">0</span></div>
         <div class="stat-card">Misses: <span id="stat-misses" class="miss">0</span></div>
         <div class="stat-card">Total Notes: <span id="stat-total" class="total">0</span></div>
+        <div class="stat-card" id="pedal-card" style="display: none;">Pedal: <span id="stat-pedal" style="color: #666; font-weight: bold;">UP</span></div>
     </div>
 
     <div id="piano-container">
@@ -259,9 +260,18 @@
         
         keyboard.style.width = currentX + 'px';
         rollCanvas.width = currentX;
-        document.getElementById('piano-container').style.width = currentX + 'px';
-
-        const synth = new Tone.PolySynth(Tone.Synth).toDestination();
+        // Realistic acoustic piano synthesis envelope with rich harmonics
+        const synth = new Tone.PolySynth(Tone.Synth, {
+            oscillator: {
+                type: "triangle8"
+            },
+            envelope: {
+                attack: 0.005,
+                decay: 2.0,
+                sustain: 0.15,
+                release: 1.2
+            }
+        }).toDestination();
 
         let ws;
         let currentNotes = [];
@@ -500,6 +510,16 @@
                     document.getElementById('stat-misses').textContent = '0';
                     document.getElementById('stat-total').textContent = currentNotes.length;
                     
+                    // Sustain pedal indicator visibility
+                    const pedalCard = document.getElementById('pedal-card');
+                    if (data.has_pedal) {
+                        pedalCard.style.display = 'inline-block';
+                        document.getElementById('stat-pedal').textContent = 'UP';
+                        document.getElementById('stat-pedal').style.color = '#666';
+                    } else {
+                        pedalCard.style.display = 'none';
+                    }
+
                     requestAnimationFrame(renderRoll);
                     
                 } else if (data.type === 'step') {
@@ -509,29 +529,53 @@
                     document.getElementById('stat-wrong').textContent = data.metrics.wrong_presses;
                     document.getElementById('stat-misses').textContent = data.metrics.missed_notes;
                     document.getElementById('stat-total').textContent = data.metrics.total_notes;
+
+                    // Update pedal indicator state
+                    if (data.pedal !== undefined) {
+                        const pEl = document.getElementById('stat-pedal');
+                        if (data.pedal) {
+                            pEl.textContent = 'DOWN (Sustained)';
+                            pEl.style.color = '#4fc3f7';
+                        } else {
+                            pEl.textContent = 'UP';
+                            pEl.style.color = '#666';
+                        }
+                    }
+
                     const pitches = data.pitches || (data.pitch ? [data.pitch] : []);
                     const results = data.results || {};
+                    const stepNotes = data.notes || pitches.map(p => ({
+                        pitch: p,
+                        duration: 0.25,
+                        velocity: 0.8
+                    }));
 
-                    if (pitches.length > 0) {
-                        // 1. Light up all struck keys simultaneously on the visual keyboard
-                        pitches.forEach(p => {
+                    if (stepNotes.length > 0) {
+                        // 1. Light up all struck keys simultaneously on the visual keyboard for held duration
+                        stepNotes.forEach(n => {
+                            const p = n.pitch;
                             const k = keys[p];
                             if (k) {
                                 const res = results[p] || data.result || 'exact';
                                 const cls = res === 'wrong' ? 'active-wrong' : (res === 'off_by_one' ? 'active-off' : 'active-exact');
                                 k.classList.add(cls);
+                                const holdMs = Math.min(1800, Math.max(120, (n.duration || 0.25) * 1000));
                                 setTimeout(() => {
                                     k.classList.remove('active-wrong', 'active-off', 'active-exact');
-                                }, 120);
+                                }, holdMs);
                             }
                         });
 
-                        // 2. Play all notes simultaneously with Tone.PolySynth
+                        // 2. Play all notes simultaneously with Tone.PolySynth using true duration & velocity
                         if (Tone.context.state !== 'running') {
                             Tone.start();
                         }
-                        const freqs = pitches.map(p => Tone.Frequency(p, "midi").toFrequency());
-                        synth.triggerAttackRelease(freqs, "16n", undefined, 0.8);
+                        stepNotes.forEach(n => {
+                            const freq = Tone.Frequency(n.pitch, "midi").toFrequency();
+                            const dur = n.duration || 0.25;
+                            const vel = Math.max(0.1, Math.min(1.0, n.velocity !== undefined ? n.velocity : 0.8));
+                            synth.triggerAttackRelease(freq, dur, undefined, vel);
+                        });
                     }
                 } else if (data.type === 'done' || data.type === 'error') {
                     playing = false;

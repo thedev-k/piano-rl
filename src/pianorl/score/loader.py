@@ -44,13 +44,15 @@ def load_score(file_path: str | Path) -> Score:
         raise ValueError(f"Invalid ticks_per_beat in MIDI file: {ticks_per_beat}")
 
     notes: List[NoteEvent] = []
+    pedal_intervals: List[Tuple[float, float]] = []
     first_tempo_bpm: Optional[float] = None
     tempo_warning_issued = False
 
     # Process all tracks in the MIDI file
     for track in mid.tracks:
         abs_tick = 0
-        active_notes: Dict[Tuple[int, int], List[int]] = {}
+        active_notes: Dict[Tuple[int, int], List[Tuple[int, int]]] = {}
+        pedal_down_tick: Optional[int] = None
 
         for msg in track:
             abs_tick += msg.time
@@ -69,16 +71,29 @@ def load_score(file_path: str | Path) -> Score:
                     warnings.warn(warning_msg, UserWarning, stacklevel=2)
                     tempo_warning_issued = True
 
+            # Handle sustain pedal (Control Change 64)
+            elif msg.type == "control_change" and msg.control == 64:
+                if msg.value >= 64:
+                    if pedal_down_tick is None:
+                        pedal_down_tick = abs_tick
+                else:
+                    if pedal_down_tick is not None:
+                        p_start = round(pedal_down_tick / ticks_per_beat, 6)
+                        p_end = round(abs_tick / ticks_per_beat, 6)
+                        if p_end > p_start:
+                            pedal_intervals.append((p_start, p_end))
+                        pedal_down_tick = None
+
             # Handle note onset
             elif msg.type == "note_on" and msg.velocity > 0:
                 key = (msg.channel, msg.note)
-                active_notes.setdefault(key, []).append(abs_tick)
+                active_notes.setdefault(key, []).append((abs_tick, msg.velocity))
 
             # Handle note release (note_off or note_on with velocity 0)
             elif msg.type == "note_off" or (msg.type == "note_on" and msg.velocity == 0):
                 key = (msg.channel, msg.note)
                 if key in active_notes and active_notes[key]:
-                    start_tick = active_notes[key].pop(0)
+                    start_tick, velocity = active_notes[key].pop(0)
                     duration_ticks = abs_tick - start_tick
                     if duration_ticks > 0:
                         start_beat = start_tick / ticks_per_beat
@@ -88,12 +103,21 @@ def load_score(file_path: str | Path) -> Score:
                                 pitch=msg.note,
                                 start_beat=round(start_beat, 6),
                                 duration_beats=round(duration_beats, 6),
+                                velocity=velocity,
                             )
                         )
 
+        # Close any active pedal still down at track end
+        if pedal_down_tick is not None:
+            p_start = round(pedal_down_tick / ticks_per_beat, 6)
+            p_end = round(abs_tick / ticks_per_beat, 6)
+            if p_end > p_start:
+                pedal_intervals.append((p_start, p_end))
+            pedal_down_tick = None
+
         # Close any lingering notes that didn't receive an explicit note_off
         for (channel, pitch), starts in active_notes.items():
-            for start_tick in starts:
+            for start_tick, velocity in starts:
                 duration_ticks = abs_tick - start_tick
                 if duration_ticks > 0:
                     start_beat = start_tick / ticks_per_beat
@@ -103,14 +127,16 @@ def load_score(file_path: str | Path) -> Score:
                             pitch=pitch,
                             start_beat=round(start_beat, 6),
                             duration_beats=round(duration_beats, 6),
+                            velocity=velocity,
                         )
                     )
 
     # Sort note events primarily by start_beat, secondarily by pitch
     notes.sort(key=lambda n: (n.start_beat, n.pitch))
+    pedal_intervals.sort(key=lambda p: (p[0], p[1]))
 
     tempo = first_tempo_bpm if first_tempo_bpm is not None else 120.0
-    return Score(notes=notes, tempo_bpm=tempo)
+    return Score(notes=notes, tempo_bpm=tempo, pedal_intervals=pedal_intervals)
 
 
 def save_score_to_midi(
@@ -137,26 +163,35 @@ def save_score_to_midi(
         mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(score.tempo_bpm), time=0)
     )
 
-    # Convert notes to absolute tick events
+    # Convert notes and pedal intervals to absolute tick events
     events: List[Tuple[int, str, int, int]] = []
     for note in score.notes:
         start_tick = int(round(note.start_beat * ticks_per_beat))
         end_tick = int(round(note.end_beat * ticks_per_beat))
-        events.append((start_tick, "note_on", note.pitch, 64))
+        events.append((start_tick, "note_on", note.pitch, note.velocity))
         events.append((end_tick, "note_off", note.pitch, 0))
 
+    for p_start, p_end in score.pedal_intervals:
+        p_start_tick = int(round(p_start * ticks_per_beat))
+        p_end_tick = int(round(p_end * ticks_per_beat))
+        events.append((p_start_tick, "cc_64", 64, 127))
+        events.append((p_end_tick, "cc_64", 64, 0))
+
     # Sort events: primary by tick, secondary note_off before note_on at same tick
-    events.sort(key=lambda e: (e[0], 0 if e[1] == "note_off" else 1))
+    events.sort(key=lambda e: (e[0], 0 if e[1] in ("note_off", "cc_64") and e[3] == 0 else 1))
 
     # Add messages with delta times
     last_tick = 0
     for tick, event_type, pitch, velocity in events:
         delta_ticks = tick - last_tick
-        track.append(
-            mido.Message(
-                event_type, note=pitch, velocity=velocity, time=delta_ticks
+        if event_type == "cc_64":
+            track.append(
+                mido.Message("control_change", control=64, value=velocity, time=delta_ticks)
             )
-        )
+        else:
+            track.append(
+                mido.Message(event_type, note=pitch, velocity=velocity, time=delta_ticks)
+            )
         last_tick = tick
 
     mid.save(str(path))

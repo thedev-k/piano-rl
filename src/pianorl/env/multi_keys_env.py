@@ -182,6 +182,8 @@ class MultiKeyPianoEnv(gym.Env):
                 {
                     "pitch": note.pitch,
                     "start_step": start_step,
+                    "duration_beats": note.duration_beats,
+                    "velocity": getattr(note, "velocity", 80),
                     "matched": False,
                     "missed_penalized": False,
                 }

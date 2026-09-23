@@ -139,3 +139,81 @@ def test_tempo_change_warning(tmp_path: Path):
     # Must retain the first tempo
     assert score.tempo_bpm == 120.0
     assert len(score) == 2
+
+
+def test_load_score_with_velocity(tmp_path: Path):
+    """Verify load_score accurately preserves note velocities from MIDI files."""
+    file_path = tmp_path / "velocity_test.mid"
+    mid = mido.MidiFile(ticks_per_beat=480)
+    track = mido.MidiTrack()
+    mid.tracks.append(track)
+
+    track.append(mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(120.0), time=0))
+    # Note 1: pitch 60, velocity 45
+    track.append(mido.Message("note_on", note=60, velocity=45, time=0))
+    track.append(mido.Message("note_off", note=60, velocity=0, time=480))
+    # Note 2: pitch 64, velocity 115
+    track.append(mido.Message("note_on", note=64, velocity=115, time=0))
+    track.append(mido.Message("note_off", note=64, velocity=0, time=480))
+
+    mid.save(str(file_path))
+
+    score = load_score(file_path)
+    assert len(score) == 2
+    assert score.notes[0].pitch == 60
+    assert score.notes[0].velocity == 45
+    assert score.notes[1].pitch == 64
+    assert score.notes[1].velocity == 115
+
+
+def test_load_score_with_sustain_pedal(tmp_path: Path):
+    """Verify load_score accurately parses CC 64 sustain pedal intervals."""
+    file_path = tmp_path / "pedal_cc64_test.mid"
+    mid = mido.MidiFile(ticks_per_beat=480)
+    track = mido.MidiTrack()
+    mid.tracks.append(track)
+
+    track.append(mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(120.0), time=0))
+
+    # Note 1 from beat 0 to 1
+    track.append(mido.Message("note_on", note=60, velocity=80, time=0))
+    # Pedal down at tick 240 (beat 0.5)
+    track.append(mido.Message("control_change", control=64, value=127, time=240))
+    # Note 1 off at tick 480 (delta 240)
+    track.append(mido.Message("note_off", note=60, velocity=0, time=240))
+    # Pedal up at tick 960 (delta 480, beat 2.0)
+    track.append(mido.Message("control_change", control=64, value=0, time=480))
+
+    mid.save(str(file_path))
+
+    score = load_score(file_path)
+    assert len(score.pedal_intervals) == 1
+    p_start, p_end = score.pedal_intervals[0]
+    assert p_start == pytest.approx(0.5)
+    assert p_end == pytest.approx(2.0)
+
+
+def test_score_save_and_reload_roundtrip(tmp_path: Path):
+    """Verify save_score_to_midi preserves velocity and pedal intervals upon reload."""
+    from pianorl.score.loader import save_score_to_midi
+
+    original = Score(
+        notes=[
+            NoteEvent(pitch=60, start_beat=0.0, duration_beats=1.0, velocity=55),
+            NoteEvent(pitch=67, start_beat=1.0, duration_beats=2.0, velocity=105),
+        ],
+        tempo_bpm=100.0,
+        pedal_intervals=[(0.5, 3.0)],
+    )
+    mid_path = tmp_path / "roundtrip.mid"
+    save_score_to_midi(original, mid_path)
+
+    reloaded = load_score(mid_path)
+    assert len(reloaded.notes) == 2
+    assert reloaded.notes[0].velocity == 55
+    assert reloaded.notes[1].velocity == 105
+    assert reloaded.tempo_bpm == pytest.approx(100.0)
+    assert len(reloaded.pedal_intervals) == 1
+    assert reloaded.pedal_intervals[0][0] == pytest.approx(0.5)
+    assert reloaded.pedal_intervals[0][1] == pytest.approx(3.0)
+

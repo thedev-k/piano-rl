@@ -135,6 +135,7 @@ def extract_melody(score: Score, steps_per_beat: int = 4) -> Tuple[Score, int]:
                         pitch=prev.pitch,
                         start_beat=prev.start_beat,
                         duration_beats=new_dur,
+                        velocity=prev.velocity,
                     )
                     final_notes.append(cand)
             else:
@@ -144,11 +145,16 @@ def extract_melody(score: Score, steps_per_beat: int = 4) -> Tuple[Score, int]:
                     pitch=prev.pitch,
                     start_beat=prev.start_beat,
                     duration_beats=new_dur,
+                    velocity=prev.velocity,
                 )
                 final_notes.append(cand)
         else:
             final_notes.append(cand)
 
     dropped_notes = len(score.notes) - len(final_notes)
-    melody_score = Score(notes=final_notes, tempo_bpm=score.tempo_bpm)
+    melody_score = Score(
+        notes=final_notes,
+        tempo_bpm=score.tempo_bpm,
+        pedal_intervals=score.pedal_intervals,
+    )
     return melody_score, dropped_notes

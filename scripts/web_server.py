@@ -174,7 +174,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "start_beat": n.start_beat,
                     "duration_beats": n.duration_beats,
                     "pitch": n.pitch,
-                    "velocity": 0.8,
+                    "velocity": round(getattr(n, "velocity", 80) / 127.0, 3),
                 }
                 for n in score.notes
             ]
@@ -187,6 +187,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "melody_only": melody_only,
                     "dropped_notes": dropped_notes,
                     "model_type": "multikey" if is_multikey else "single_key",
+                    "has_pedal": len(score.pedal_intervals) > 0,
                 }
             )
 
@@ -199,6 +200,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             while not (terminated or truncated):
                 step_now = env.current_step
+                current_beat = step_now / env.steps_per_beat
                 raw_action = PLAYER.act(obs)
 
                 # Process action depending on multi-key vs single-key
@@ -226,36 +228,80 @@ async def websocket_endpoint(websocket: WebSocket):
                 elif new_wrong > 0:
                     overall_result = "wrong"
 
-                # Calculate per-pitch result
+                # Check sustain pedal state at current beat
+                is_pedal_down = any(
+                    p_start <= current_beat < p_end
+                    for p_start, p_end in score.pedal_intervals
+                )
+                active_pedal_end = max(
+                    (p_end for p_start, p_end in score.pedal_intervals if p_start <= current_beat < p_end),
+                    default=current_beat,
+                )
+                pedal_sustain_beats = max(0.0, active_pedal_end - current_beat) if is_pedal_down else 0.0
+
+                # Calculate per-pitch result, duration, and velocity
                 pitch_results = {}
-                if is_multikey and pressed_pitches:
+                step_notes = []
+                tempo_bpm = env.current_score.tempo_bpm
+
+                if pressed_pitches:
                     for p in pressed_pitches:
-                        matched_exact = any(
-                            t["pitch"] == p and t["start_step"] == step_now
-                            for t in env.targets
-                        )
+                        matched_target = None
+                        matched_exact = False
+                        matched_off = False
+
+                        for t in env.targets:
+                            if t["pitch"] == p:
+                                if t["start_step"] == step_now:
+                                    matched_exact = True
+                                    matched_target = t
+                                    break
+                                elif abs(t["start_step"] - step_now) == 1 and matched_target is None:
+                                    matched_off = True
+                                    matched_target = t
+
                         if matched_exact:
                             pitch_results[str(p)] = "exact"
+                        elif matched_off:
+                            pitch_results[str(p)] = "off_by_one"
                         else:
-                            matched_off = any(
-                                t["pitch"] == p and abs(t["start_step"] - step_now) == 1
-                                for t in env.targets
-                            )
-                            pitch_results[str(p)] = "off_by_one" if matched_off else "wrong"
-                elif pressed_pitches:
-                    pitch_results[str(pressed_pitches[0])] = overall_result or "exact"
+                            pitch_results[str(p)] = "wrong"
+
+                        # Retrieve authentic note duration and velocity from target if matched
+                        if matched_target is not None:
+                            dur_beats = matched_target.get("duration_beats", 1.0)
+                            vel_raw = matched_target.get("velocity", 80)
+                            vel_norm = round(max(0.1, min(1.0, vel_raw / 127.0)), 3)
+                        else:
+                            dur_beats = 0.5
+                            vel_norm = 0.65  # Moderate default for speculative/wrong model strike
+
+                        # If sustain pedal is pressed, let note ring until pedal release
+                        eff_dur_beats = max(dur_beats, pedal_sustain_beats)
+                        dur_seconds = (eff_dur_beats * 60.0) / tempo_bpm
+                        dur_seconds_scaled = round(max(0.08, min(6.0, dur_seconds / playback_speed)), 3)
+
+                        step_notes.append(
+                            {
+                                "pitch": p,
+                                "duration": dur_seconds_scaled,
+                                "velocity": vel_norm,
+                            }
+                        )
 
                 # Send step update
                 await websocket.send_json(
                     {
                         "type": "step",
                         "step": step_now,
-                        "beat": step_now / env.steps_per_beat,
+                        "beat": current_beat,
                         "action": (
                             [int(x) for x in act_arr] if is_multikey else int(env_action)
                         ),
                         "pitches": pressed_pitches,
                         "pitch": pressed_pitches[0] if pressed_pitches else None,
+                        "notes": step_notes,
+                        "pedal": is_pedal_down,
                         "results": pitch_results,
                         "result": overall_result,
                         "is_multikey": is_multikey,

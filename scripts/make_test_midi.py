@@ -30,10 +30,14 @@ def create_midi_file(
 
     # Convert notes to absolute tick events
     events: List[Tuple[int, str, int, int]] = []
-    for pitch, start_beat, duration_beats in notes:
+    for item in notes:
+        pitch = item[0]
+        start_beat = item[1]
+        duration_beats = item[2]
+        vel = item[3] if len(item) > 3 else 64
         start_tick = int(round(start_beat * ticks_per_beat))
         end_tick = int(round((start_beat + duration_beats) * ticks_per_beat))
-        events.append((start_tick, "note_on", pitch, 64))
+        events.append((start_tick, "note_on", pitch, vel))
         events.append((end_tick, "note_off", pitch, 0))
 
     # Sort events: primary by tick, secondary note_off before note_on at same tick

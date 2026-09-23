@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import List, Iterator
+from dataclasses import dataclass, field
+from typing import List, Iterator, Tuple
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
@@ -21,10 +21,12 @@ class NoteEvent:
         pitch: MIDI note number (0 to 127, where 60 is Middle C).
         start_beat: Time when the note starts, measured in beats (>= 0).
         duration_beats: How long the note lasts, measured in beats (> 0).
+        velocity: Strike strength / volume (0 to 127, default 80).
     """
     pitch: int
     start_beat: float
     duration_beats: float
+    velocity: int = 80
 
     def __post_init__(self):
         if not (0 <= self.pitch <= 127):
@@ -33,6 +35,8 @@ class NoteEvent:
             raise ValueError(f"start_beat must be non-negative, got {self.start_beat}")
         if self.duration_beats <= 0:
             raise ValueError(f"duration_beats must be strictly positive, got {self.duration_beats}")
+        if not (0 <= self.velocity <= 127):
+            raise ValueError(f"velocity must be between 0 and 127, got {self.velocity}")
 
     @property
     def note_name(self) -> str:
@@ -52,9 +56,11 @@ class Score:
     Attributes:
         notes: List of NoteEvent objects, sorted by start_beat.
         tempo_bpm: Tempo in beats per minute (BPM).
+        pedal_intervals: List of (start_beat, end_beat) intervals where sustain pedal is down.
     """
     notes: List[NoteEvent]
     tempo_bpm: float = 120.0
+    pedal_intervals: List[Tuple[float, float]] = field(default_factory=list)
 
     def __post_init__(self):
         if self.tempo_bpm <= 0:

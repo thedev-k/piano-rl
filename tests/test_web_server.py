@@ -62,7 +62,7 @@ def test_websocket_play():
             assert "start_beat" in note
             assert "duration_beats" in note
             assert "velocity" in note
-            assert note["velocity"] == 0.8
+            assert 0.0 <= note["velocity"] <= 1.0
             
         # We should then receive at least one step message
         step_data = websocket.receive_json()
@@ -191,4 +191,55 @@ def test_websocket_play_multikey_chords(tmp_path: Path):
         assert step_data["results"]["64"] == "exact"
         assert step_data["results"]["67"] == "exact"
 
+        # Check notes payload has duration and velocity
+        assert "notes" in step_data
+        assert len(step_data["notes"]) == 3
+        for n_info in step_data["notes"]:
+            assert "pitch" in n_info
+            assert "duration" in n_info
+            assert "velocity" in n_info
+            # 1 beat at 120 BPM = 0.5s duration
+            assert n_info["duration"] == pytest.approx(0.5, rel=0.1)
+            assert 0.1 <= n_info["velocity"] <= 1.0
+
         websocket.send_json({"action": "stop"})
+
+
+def test_websocket_play_pedal_and_velocity(tmp_path: Path):
+    """Test that note velocity and sustain pedal CC 64 are delivered over websocket."""
+    from pianorl.score import Score, NoteEvent, save_score_to_midi
+    from pianorl.agent import PerfectMultiPlayer
+
+    # Note with velocity 110, held for 0.5 beats, but pedal active until beat 3.0
+    pedal_score = Score(
+        notes=[
+            NoteEvent(pitch=60, start_beat=0.0, duration_beats=0.5, velocity=110),
+        ],
+        tempo_bpm=120.0,
+        pedal_intervals=[(0.0, 3.0)],
+    )
+    test_path = tmp_path / "pedal_test.mid"
+    save_score_to_midi(pedal_score, test_path)
+
+    import web_server
+    web_server.PLAYER = PerfectMultiPlayer()
+
+    with client.websocket_connect("/ws") as websocket:
+        websocket.send_json({"action": "play", "file": str(test_path)})
+        init_data = websocket.receive_json()
+        assert init_data["type"] == "init"
+        assert init_data["has_pedal"] is True
+        assert init_data["notes"][0]["velocity"] == pytest.approx(110 / 127.0, abs=0.01)
+
+        step_data = websocket.receive_json()
+        assert step_data["type"] == "step"
+        assert step_data["pedal"] is True
+        assert len(step_data["notes"]) == 1
+        note_info = step_data["notes"][0]
+        assert note_info["pitch"] == 60
+        assert note_info["velocity"] == pytest.approx(110 / 127.0, abs=0.01)
+        # Note duration was sustained by pedal until beat 3.0 (3 beats at 120 BPM = 1.5 seconds)
+        assert note_info["duration"] == pytest.approx(1.5, rel=0.1)
+
+        websocket.send_json({"action": "stop"})
+
