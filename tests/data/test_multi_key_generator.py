@@ -69,9 +69,9 @@ def test_level_name_formats():
     with pytest.raises(ValueError):
         generate_multi_key_score(0)
     with pytest.raises(ValueError):
-        generate_multi_key_score(9)
+        generate_multi_key_score(10)
     with pytest.raises(ValueError):
-        generate_multi_key_score("9M")
+        generate_multi_key_score("10M")
     with pytest.raises(ValueError):
         generate_multi_key_score("invalid")
     with pytest.raises(TypeError):
@@ -79,8 +79,8 @@ def test_level_name_formats():
 
 
 def test_pitches_within_88_keys():
-    """Verify all notes across all 8 multi-key levels stay strictly within piano keys [21, 108]."""
-    for level in range(1, 9):
+    """Verify all notes across all 9 multi-key levels stay strictly within piano keys [21, 108]."""
+    for level in range(1, 10):
         for seed in range(5):
             score = generate_multi_key_score(level, seed=seed * 77)
             assert len(score.notes) > 0
@@ -91,7 +91,7 @@ def test_pitches_within_88_keys():
 
 
 def test_beats_on_16th_grid():
-    """Verify all note start beats and durations align strictly to 0.25-beat grid."""
+    """Verify note start beats and durations align strictly to 0.25-beat grid for Levels 1M-8M."""
     for level in range(1, 9):
         for seed in range(5):
             score = generate_multi_key_score(level, seed=seed)
@@ -107,8 +107,8 @@ def test_beats_on_16th_grid():
 
 
 def test_all_levels_have_polyphony():
-    """Verify every level (1M to 8M) produces polyphonic scores with simultaneous/overlapping notes."""
-    for level in range(1, 9):
+    """Verify every level (1M to 9M) produces polyphonic scores with simultaneous/overlapping notes."""
+    for level in range(1, 10):
         for seed in range(3):
             score = generate_multi_key_score(level, seed=seed)
             assert has_polyphony(score), f"Level {level}M failed to produce polyphony!"
@@ -146,3 +146,60 @@ def test_level_8m_fast_polyphony_runs_and_chords():
     score = generate_multi_key_score(8, seed=80)
     assert 100.0 <= score.tempo_bpm <= 130.0
     assert any(n.duration_beats == 0.25 for n in score.notes), "Level 8M must have 16th-note runs"
+
+
+def test_level_9m_dense_sustained_chords():
+    """Level 9M: dense sustained bed + fast moving line targeting ~6-7 chord moments per beat."""
+    from collections import Counter
+    from pianorl.score.melody import analyze_score
+
+    all_pitches = set()
+    densities = []
+
+    for seed in range(10):
+        score = generate_multi_key_score(9, seed=seed * 31 + 7)
+        assert 75.0 <= score.tempo_bpm <= 105.0
+        assert len(score.notes) > 100
+
+        analysis = analyze_score(score)
+        chord_density = analysis["num_chords"] / score.total_beats
+        densities.append(chord_density)
+
+        # Confirm presence of sustained bed (>= 2.0 beats)
+        has_sustained = any(n.duration_beats >= 2.0 for n in score.notes)
+        assert has_sustained, f"Seed {seed} missing sustained chord bed!"
+
+        # Confirm presence of fast moving notes (<= 0.25 down to 0.125 beats)
+        has_fast_moving = any(n.duration_beats <= 0.25 for n in score.notes)
+        assert has_fast_moving, f"Seed {seed} missing fast moving melodic line!"
+
+        for n in score.notes:
+            all_pitches.add(n.pitch)
+
+    # Verify chord density is roughly 6 to 7 chord moments per beat
+    avg_density = sum(densities) / len(densities)
+    assert 5.5 <= avg_density <= 7.5, (
+        f"Level 9M expected ~6-7 chord moments/beat, got {avg_density:.2f}"
+    )
+
+    # Verify full keyboard range coverage across seeds (bass < 36 up to treble > 88)
+    assert min(all_pitches) < 36, f"Lowest pitch {min(all_pitches)} not in low bass range"
+    assert max(all_pitches) > 88, f"Highest pitch {max(all_pitches)} not in high treble range"
+
+
+def test_multikey_manifest_split_sizes_include_9m():
+    """Verify data/manifest_multikey.json includes 170 train and 30 held-out pieces for 9M."""
+    import json
+    from pathlib import Path
+
+    manifest_path = Path("data/manifest_multikey.json")
+    if not manifest_path.exists():
+        pytest.skip("Manifest not generated yet.")
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    items_9m_train = [it for it in manifest if it["level"] == "9M" and it["split"] == "train"]
+    items_9m_heldout = [it for it in manifest if it["level"] == "9M" and it["split"] == "heldout"]
+
+    assert len(items_9m_train) == 170, f"Expected 170 train pieces for 9M, got {len(items_9m_train)}"
+    assert len(items_9m_heldout) == 30, f"Expected 30 heldout pieces for 9M, got {len(items_9m_heldout)}"
+

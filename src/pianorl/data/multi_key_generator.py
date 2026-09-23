@@ -440,6 +440,100 @@ def generate_level_8m(rng: random.Random) -> Score:
     return Score(notes=notes, tempo_bpm=tempo)
 
 
+def generate_level_9m(rng: random.Random) -> Score:
+    """Level 9M: Dense sustained chords with moving upper melody (75-105 BPM, 32 beats).
+
+    Features two simultaneous overlapping layers:
+    1. A low-to-mid register sustained chord bed held for 2.0 to 4.0 beats (randomly
+       selected per chord as a 2-note dyad, 3-note triad, or 4-note 7th chord).
+    2. A fast moving melodic line in the mid-to-high register using a mix of 16th
+       notes (0.25 beat) and 32nd-note equivalents (0.125 beat), playing while
+       the sustained chord bed rings underneath.
+
+    Produces roughly 6-7 chord moments per beat across the full 88-key piano range.
+    """
+    tempo = float(rng.randint(75, 105))
+    total_beats = 32.0
+
+    # Pick root across bass register (MIDI 24 to 48: C1 to C3), with minor or major key
+    key_root = rng.randint(24, 48)
+    is_minor = rng.random() < 0.5
+    scale_steps = HARMONIC_MINOR_STEPS if is_minor else MAJOR_SCALE_STEPS
+
+    notes: List[NoteEvent] = []
+
+    # 1. Sustained Bed (low-to-mid register chords held 2.0 to 4.0 beats)
+    beat = 0.0
+    progression_steps = [0, 5, 3, 4] if is_minor else [0, 7, 9, 5]
+    prog_idx = 0
+    while beat < total_beats:
+        dur = float(rng.choice([2.0, 3.0, 4.0]))
+        dur = min(dur, total_beats - beat)
+        chord_root = key_root + progression_steps[prog_idx % len(progression_steps)]
+        prog_idx += 1
+
+        # Randomly choose chord structure per chord: 2-note dyad, 3-note triad, 4-note 7th
+        chord_type = rng.choices(["dyad", "triad", "seventh"], weights=[40, 40, 20], k=1)[0]
+        if chord_type == "dyad":
+            offsets = [0, rng.choice([7, 12, 16])]
+        elif chord_type == "triad":
+            third = 3 if is_minor else 4
+            offsets = [0, third, 7]
+        else:
+            third = 3 if is_minor else 4
+            seventh = 10 if is_minor else 11
+            offsets = [0, third, 7, seventh]
+
+        for off in offsets:
+            notes.append(
+                NoteEvent(
+                    pitch=_clamp_pitch(chord_root + off),
+                    start_beat=round(beat, 4),
+                    duration_beats=dur,
+                )
+            )
+        beat += dur
+
+    # 2. Moving Line (mid-to-high register, mix of 16ths and 32nds)
+    beat = 0.0
+    treble_pos = key_root + 36  # Start 3 octaves higher (C4 to C6)
+    while beat < total_beats:
+        step = rng.choices([0.125, 0.25], weights=[70, 30], k=1)[0]
+        if beat + step > total_beats:
+            step = round(total_beats - beat, 4)
+        if step <= 0:
+            break
+
+        # Moving line strikes 2 notes (harmonized melodic line / dyad)
+        p1 = _clamp_pitch(treble_pos)
+        harm_interval = rng.choice([3, 4, 7, 8, 9, 12])
+        p2 = _clamp_pitch(p1 + harm_interval)
+
+        notes.append(
+            NoteEvent(
+                pitch=p1,
+                start_beat=round(beat, 4),
+                duration_beats=step,
+            )
+        )
+        notes.append(
+            NoteEvent(
+                pitch=p2,
+                start_beat=round(beat, 4),
+                duration_beats=step,
+            )
+        )
+        beat = round(beat + step, 4)
+
+        # Smooth melodic motion
+        delta = rng.choice([-3, -2, -1, 0, 1, 2, 3, 5])
+        treble_pos = _clamp_pitch(treble_pos + delta)
+        treble_pos = max(key_root + 24, min(key_root + 52, treble_pos))
+
+    notes.sort(key=lambda n: (round(n.start_beat, 4), n.pitch))
+    return Score(notes=notes, tempo_bpm=tempo)
+
+
 def _deduplicate_notes(notes: List[NoteEvent]) -> List[NoteEvent]:
     """Merge duplicate notes with the exact same pitch and start beat (unisons).
 
@@ -468,10 +562,10 @@ def normalize_level_tag(lvl: Union[int, str]) -> str:
 def generate_multi_key_score(
     level: Union[int, str], seed: Optional[int] = None
 ) -> Score:
-    """Generate a procedural polyphonic musical Score for a given multi-key level (1M to 8M).
+    """Generate a procedural polyphonic musical Score for a given multi-key level (1M to 9M).
 
     Args:
-        level: Level identifier: integer 1..8 or string "1M".."8M" (case-insensitive).
+        level: Level identifier: integer 1..9 or string "1M".."9M" (case-insensitive).
         seed: Optional random seed for deterministic reproducibility.
 
     Returns:
@@ -483,16 +577,16 @@ def generate_multi_key_score(
             lvl_num = int(clean_lvl)
         except ValueError:
             raise ValueError(
-                f"Invalid level '{level}'. Expected 1..8 or '1M'..'8M'."
+                f"Invalid level '{level}'. Expected 1..9 or '1M'..'9M'."
             )
     elif isinstance(level, int):
         lvl_num = level
     else:
         raise TypeError(f"Level must be int or str, got {type(level)}")
 
-    if lvl_num not in (1, 2, 3, 4, 5, 6, 7, 8):
+    if lvl_num not in (1, 2, 3, 4, 5, 6, 7, 8, 9):
         raise ValueError(
-            f"Level must be between 1 and 8 (or '1M'..'8M'); got {level}"
+            f"Level must be between 1 and 9 (or '1M'..'9M'); got {level}"
         )
 
     rng = random.Random(seed)
@@ -505,8 +599,10 @@ def generate_multi_key_score(
         6: generate_level_6m,
         7: generate_level_7m,
         8: generate_level_8m,
+        9: generate_level_9m,
     }
     raw_score = generators[lvl_num](rng)
     clean_notes = _deduplicate_notes(raw_score.notes)
     return Score(notes=clean_notes, tempo_bpm=raw_score.tempo_bpm)
+
 

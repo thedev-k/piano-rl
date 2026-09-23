@@ -11,6 +11,7 @@ from .multi_key_generator import (
     generate_level_6m,
     generate_level_7m,
     generate_level_8m,
+    generate_level_9m,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "generate_level_6m",
     "generate_level_7m",
     "generate_level_8m",
+    "generate_level_9m",
 ]

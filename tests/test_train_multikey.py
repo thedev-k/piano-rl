@@ -96,9 +96,13 @@ def test_parse_level_weights():
     weights = parse_level_weights("1M: 3 , 2m : 2, 3M:1", active_levels=["1M", "2M", "3M"])
     assert weights == {"1M": 3.0, "2M": 2.0, "3M": 1.0}
 
+    # Level 9M support in level weights
+    weights_9m = parse_level_weights("1M:1, 9M:3.5", active_levels=["1M", "9M"])
+    assert weights_9m == {"1M": 1.0, "9M": 3.5}
+
     # Missing active level defaults to 1.0
-    weights_partial = parse_level_weights("1M:4", active_levels=["1M", "2M", "3M"])
-    assert weights_partial == {"1M": 4.0, "2M": 1.0, "3M": 1.0}
+    weights_partial = parse_level_weights("1M:4", active_levels=["1M", "2M", "3M", "9M"])
+    assert weights_partial == {"1M": 4.0, "2M": 1.0, "3M": 1.0, "9M": 1.0}
 
     # Error handling
     with pytest.raises(ValueError, match="Invalid level weight format"):
