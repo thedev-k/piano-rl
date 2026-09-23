@@ -130,6 +130,19 @@ class MultiKeyPianoEnv(gym.Env):
         obs = np.concatenate([window_flat, pos_one_hot, tempo_norm]).astype(np.float32)
         return obs
 
+    def _is_neighbor_key(self, pressed_pitch: int, current_step: int) -> bool:
+        """Check if an unmatched struck pitch is within 1-2 semitones of an active or nearby target note."""
+        for target in self.targets:
+            dur_steps = max(1, int(round(target["duration_beats"] * self.steps_per_beat)))
+            # Check if target starts within +-2 steps OR is currently sounding (active)
+            is_active_or_nearby = (
+                abs(target["start_step"] - current_step) <= 2
+                or (target["start_step"] <= current_step < target["start_step"] + dur_steps)
+            )
+            if is_active_or_nearby and 1 <= abs(target["pitch"] - pressed_pitch) <= 2:
+                return True
+        return False
+
     def _get_info(self) -> dict:
         """Return running counters and state information."""
         return {
@@ -261,8 +274,11 @@ class MultiKeyPianoEnv(gym.Env):
                 still_unmatched_strikes.append(pitch)
 
         # 4. Any remaining unmatched strikes are extra/wrong presses
-        for _ in still_unmatched_strikes:
-            step_reward += self.reward_config.wrong_press
+        for pitch in still_unmatched_strikes:
+            penalty = self.reward_config.wrong_press
+            if self.reward_config.neighbor_key_penalty != 0.0 and self._is_neighbor_key(pitch, t):
+                penalty += -abs(self.reward_config.neighbor_key_penalty)
+            step_reward += penalty
             self.wrong_presses += 1
 
         # 5. Check for newly missed notes

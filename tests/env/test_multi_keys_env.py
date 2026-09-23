@@ -203,3 +203,57 @@ def test_episode_lifecycle_and_termination():
     assert terminated
     assert info["missed_notes"] == 3
     assert step_count == env.end_step + 1
+
+
+def test_neighbor_key_penalty():
+    """Verify that neighbor key strikes (1-2 semitones off) receive additional penalty when configured."""
+    # Target note at beat 1.0 (step 4): pitch 60
+    notes = [NoteEvent(pitch=60, start_beat=1.0, duration_beats=2.0)]
+    score = make_test_score(notes)
+
+    # 1. Default RewardConfig (neighbor_key_penalty = 0.0): both neighbor and far key get -0.5
+    env_default = MultiKeyPianoEnv(scores=[score])
+    env_default.reset(options={"piece_index": 0})
+    for _ in range(4):
+        env_default.step(make_action([]))
+
+    # Strike correct 60 + neighbor 61 (1 semitone) + far 75 (15 semitones)
+    act = make_action([60, 61, 75])
+    _, reward, _, _, info = env_default.step(act)
+    # +1.0 (exact 60) + -0.5 (wrong 61) + -0.5 (wrong 75) = 0.0
+    assert reward == pytest.approx(0.0)
+    assert info["wrong_presses"] == 2
+
+    # 2. Configured RewardConfig with neighbor_key_penalty = -0.3
+    cfg_penalty = RewardConfig(wrong_press=-0.5, neighbor_key_penalty=-0.3)
+    env_penalty = MultiKeyPianoEnv(scores=[score], reward_config=cfg_penalty)
+    env_penalty.reset(options={"piece_index": 0})
+    for _ in range(4):
+        env_penalty.step(make_action([]))
+
+    # A) Far wrong key (pitch 75, distance 15): gets standard -0.5 penalty
+    act_far = make_action([60, 75])
+    _, reward_far, _, _, _ = env_penalty.step(act_far)
+    # +1.0 (exact 60) - 0.5 (far wrong 75) = +0.5
+    assert reward_far == pytest.approx(0.5)
+
+    # Reset and test B) Neighbor wrong key (pitch 61, distance 1 semitone): gets -0.5 + -0.3 = -0.8 penalty
+    env_penalty.reset(options={"piece_index": 0})
+    for _ in range(4):
+        env_penalty.step(make_action([]))
+
+    act_neighbor = make_action([60, 61])
+    _, reward_neighbor, _, _, _ = env_penalty.step(act_neighbor)
+    # +1.0 (exact 60) - 0.8 (neighbor wrong 61) = +0.2
+    assert reward_neighbor == pytest.approx(0.2)
+
+    # Reset and test C) Distance 2 semitones (pitch 62): also neighbor key -> -0.8 penalty
+    env_penalty.reset(options={"piece_index": 0})
+    for _ in range(4):
+        env_penalty.step(make_action([]))
+
+    act_neighbor_2 = make_action([60, 62])
+    _, reward_neighbor_2, _, _, _ = env_penalty.step(act_neighbor_2)
+    # +1.0 (exact 60) - 0.8 (neighbor wrong 62) = +0.2
+    assert reward_neighbor_2 == pytest.approx(0.2)
+

@@ -205,6 +205,7 @@ def train_multikey(
     off_by_one_reward: float = 0.5,
     wrong_press_penalty: float = -0.5,
     miss_penalty: float = -1.0,
+    neighbor_key_penalty: float = 0.0,
     policy: str = "pitch_conv",
     level_weights: Optional[Union[str, Dict[str, float]]] = None,
     scores_override: Optional[List[Score]] = None,
@@ -245,6 +246,7 @@ def train_multikey(
         hit_off_by_one=off_by_one_reward,
         wrong_press=wrong_press_penalty,
         miss=miss_penalty,
+        neighbor_key_penalty=neighbor_key_penalty,
     )
 
     print("\nReward configuration:")
@@ -252,6 +254,8 @@ def train_multikey(
     print(f"  Off-by-one hit reward:  {reward_config.hit_off_by_one:+.2f}")
     print(f"  Wrong press penalty:    {reward_config.wrong_press:+.2f}")
     print(f"  Miss penalty:           {reward_config.miss:+.2f}")
+    if reward_config.neighbor_key_penalty != 0.0:
+        print(f"  Neighbor key penalty:   {-abs(reward_config.neighbor_key_penalty):+.2f} (extra)")
 
     print(f"\nSetting up {n_envs} parallel environment(s) (CPU only, 1 thread/worker)...")
     if n_envs > 1:
@@ -281,6 +285,7 @@ def train_multikey(
                 "hit_off_by_one": reward_config.hit_off_by_one,
                 "wrong_press": reward_config.wrong_press,
                 "miss": reward_config.miss,
+                "neighbor_key_penalty": reward_config.neighbor_key_penalty,
             },
             f,
             indent=2,
@@ -465,6 +470,12 @@ def main():
         help="Penalty for missing a scheduled note (default: -1.0).",
     )
     parser.add_argument(
+        "--neighbor-key-penalty",
+        type=float,
+        default=0.0,
+        help="Additional penalty for pressing a neighbor key within 1-2 semitones of an active note (default: 0.0).",
+    )
+    parser.add_argument(
         "--policy",
         type=str,
         default="pitch_conv",
@@ -493,6 +504,7 @@ def main():
         off_by_one_reward=args.off_by_one_reward,
         wrong_press_penalty=args.wrong_press_penalty,
         miss_penalty=args.miss_penalty,
+        neighbor_key_penalty=args.neighbor_key_penalty,
         policy=args.policy,
         level_weights=args.level_weights,
     )
