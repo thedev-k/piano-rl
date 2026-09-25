@@ -18,6 +18,7 @@ class RewardConfig:
     wrong_press: float = -0.5       # Striking a key with no matching note nearby
     miss: float = -1.0              # Failing to strike a note before window closes
     neighbor_key_penalty: float = 0.0  # Extra penalty when an unmatched key is within 1-2 semitones of an active note
+    repeat_penalty: float = 0.0        # Extra penalty when an unmatched key is a double-strike of an active note within +-2 steps
 
 
 def split_observation(

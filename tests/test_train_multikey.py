@@ -178,3 +178,32 @@ def test_multikey_env_weighted_sampling():
     # Expected: ~0.80. Allow reasonable statistical tolerance [0.72, 0.88]
     assert 0.72 <= prob_s1 <= 0.88, f"Observed frequency {prob_s1:.2f} deviated too much from 0.80"
 
+
+def test_train_multikey_reward_config_penalties():
+    """Verify train_multikey saves configured neighbor_key_penalty and repeat_penalty to reward_config.json."""
+    toy_scores = [
+        generate_multi_key_score(1, seed=10),
+    ]
+
+    final_model_path = train_multikey(
+        levels=["1M"],
+        timesteps=64,
+        n_envs=1,
+        seed=42,
+        run_name="smoke_test_penalties",
+        n_steps=64,
+        batch_size=32,
+        scores_override=toy_scores,
+        neighbor_key_penalty=-0.3,
+        repeat_penalty=-0.4,
+    )
+
+    reward_cfg_file = final_model_path.parent / "reward_config.json"
+    assert reward_cfg_file.exists()
+    with open(reward_cfg_file, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+
+    assert cfg["neighbor_key_penalty"] == pytest.approx(-0.3)
+    assert cfg["repeat_penalty"] == pytest.approx(-0.4)
+
+

@@ -257,3 +257,58 @@ def test_neighbor_key_penalty():
     # +1.0 (exact 60) - 0.8 (neighbor wrong 62) = +0.2
     assert reward_neighbor_2 == pytest.approx(0.2)
 
+
+def test_repeat_penalty():
+    """Verify that double-striking active or nearby notes receives additional penalty when configured."""
+    # Target note at beat 1.0 (step 4): pitch 60, lasting 2.0 beats (steps 4 to 12)
+    notes = [NoteEvent(pitch=60, start_beat=1.0, duration_beats=2.0)]
+    score = make_test_score(notes)
+
+    # 1. Default RewardConfig (repeat_penalty = 0.0): repeat strike gets standard -0.5
+    env_default = MultiKeyPianoEnv(scores=[score])
+    env_default.reset(options={"piece_index": 0})
+    for _ in range(4):
+        env_default.step(make_action([]))
+
+    # Step 4: Hit exact 60 -> reward +1.0
+    _, reward_exact, _, _, _ = env_default.step(make_action([60]))
+    assert reward_exact == pytest.approx(1.0)
+
+    # Step 5: Strike 60 again (repeat while active) -> standard -0.5 penalty
+    _, reward_repeat, _, _, info = env_default.step(make_action([60]))
+    assert reward_repeat == pytest.approx(-0.5)
+    assert info["wrong_presses"] == 1
+
+    # 2. Configured RewardConfig with repeat_penalty = -0.4
+    cfg_penalty = RewardConfig(wrong_press=-0.5, repeat_penalty=-0.4, neighbor_key_penalty=-0.3)
+    env_penalty = MultiKeyPianoEnv(scores=[score], reward_config=cfg_penalty)
+    env_penalty.reset(options={"piece_index": 0})
+    for _ in range(4):
+        env_penalty.step(make_action([]))
+
+    # Step 4: Hit exact 60
+    env_penalty.step(make_action([60]))
+
+    # Step 5: Double-strike 60 (active repeat) -> -0.5 + -0.4 = -0.9 penalty
+    _, reward_repeat_pen, _, _, _ = env_penalty.step(make_action([60]))
+    assert reward_repeat_pen == pytest.approx(-0.9)
+
+    # Step 6: Strike 61 (neighbor) -> -0.5 + -0.3 = -0.8 penalty
+    _, reward_neighbor_pen, _, _, _ = env_penalty.step(make_action([61]))
+    assert reward_neighbor_pen == pytest.approx(-0.8)
+
+    # Step 7: Strike 75 (far away) -> standard -0.5 penalty
+    _, reward_far_pen, _, _, _ = env_penalty.step(make_action([75]))
+    assert reward_far_pen == pytest.approx(-0.5)
+
+    # Test 3: Unprovoked early repeat strike within +-2 steps (at step 2 for note starting at step 4)
+    env_early = MultiKeyPianoEnv(scores=[score], reward_config=cfg_penalty)
+    env_early.reset(options={"piece_index": 0})
+    for _ in range(2):
+        env_early.step(make_action([]))
+
+    # At step 2: strike 60 (2 steps before note at step 4) -> -0.5 + -0.4 = -0.9
+    _, reward_early, _, _, _ = env_early.step(make_action([60]))
+    assert reward_early == pytest.approx(-0.9)
+
+

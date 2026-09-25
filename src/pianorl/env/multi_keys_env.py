@@ -130,6 +130,21 @@ class MultiKeyPianoEnv(gym.Env):
         obs = np.concatenate([window_flat, pos_one_hot, tempo_norm]).astype(np.float32)
         return obs
 
+    def _is_repeat_key(self, pressed_pitch: int, current_step: int) -> bool:
+        """Check if an unmatched struck pitch is a double-strike of an already-active or just-struck note within +-2 steps."""
+        min_s = max(0, current_step - getattr(self, "_max_dur_steps", 16))
+        max_s = current_step + 2
+        for s in range(min_s, max_s + 1):
+            for target in self._targets_by_step.get(s, []):
+                dur_steps = max(1, int(round(target["duration_beats"] * self.steps_per_beat)))
+                is_active_or_nearby = (
+                    abs(target["start_step"] - current_step) <= 2
+                    or (target["start_step"] <= current_step < target["start_step"] + dur_steps)
+                )
+                if is_active_or_nearby and target["pitch"] == pressed_pitch:
+                    return True
+        return False
+
     def _is_neighbor_key(self, pressed_pitch: int, current_step: int) -> bool:
         """Check if an unmatched struck pitch is within 1-2 semitones of an active or nearby target note."""
         min_s = max(0, current_step - getattr(self, "_max_dur_steps", 16))
@@ -286,8 +301,12 @@ class MultiKeyPianoEnv(gym.Env):
         # 4. Any remaining unmatched strikes are extra/wrong presses
         for pitch in still_unmatched_strikes:
             penalty = self.reward_config.wrong_press
-            if self.reward_config.neighbor_key_penalty != 0.0 and self._is_neighbor_key(pitch, t):
-                penalty += -abs(self.reward_config.neighbor_key_penalty)
+            if self._is_repeat_key(pitch, t):
+                if self.reward_config.repeat_penalty != 0.0:
+                    penalty += -abs(self.reward_config.repeat_penalty)
+            elif self._is_neighbor_key(pitch, t):
+                if self.reward_config.neighbor_key_penalty != 0.0:
+                    penalty += -abs(self.reward_config.neighbor_key_penalty)
             step_reward += penalty
             self.wrong_presses += 1
 
