@@ -17,6 +17,8 @@ from pianorl.eval.diagnosis_multikey import (
     categorize_multikey_wrong_press,
     run_multikey_diagnosis,
     run_multikey_midi_segment_diagnosis,
+    RepeatErrorDetail,
+    print_repeat_errors_list,
 )
 from pianorl.agent import MultiKeyTensorboardCallback
 
@@ -310,6 +312,100 @@ def test_print_multikey_midi_segment_table(capsys):
     assert "30.0s - 60.0s" in captured
     assert "Overall" in captured
     assert "rush_e.mid" in captured
+
+
+def test_run_multikey_midi_segment_diagnosis_repeat_errors():
+    """Verify run_multikey_midi_segment_diagnosis returns repeat error details when requested."""
+    from pianorl.score import Score, NoteEvent
+
+    score = Score(
+        notes=[
+            NoteEvent(pitch=60, start_beat=1.0, duration_beats=2.0),
+        ]
+    )
+
+    class DoubleStrikePlayer:
+        def __init__(self):
+            self.step = 0
+        def act(self, obs):
+            act = np.zeros(88, dtype=np.int8)
+            # Step 4: hit pitch 60
+            if self.step == 4:
+                act[60 - 21] = 1
+            # Step 6: hit pitch 60 again (repeat error during held note!)
+            elif self.step == 6:
+                act[60 - 21] = 1
+            self.step += 1
+            return act
+
+    results, returned_score, repeat_errors = run_multikey_midi_segment_diagnosis(
+        player_or_path=DoubleStrikePlayer(),
+        score_or_path=score,
+        split_seconds=[2.0],
+        return_repeat_errors=True,
+    )
+
+    assert returned_score is score
+    assert len(repeat_errors) == 1
+    err = repeat_errors[0]
+    assert err.step == 6
+    assert err.pitch == 60
+    assert err.pitch_name == "C4"
+    assert len(err.same_pitch_notes) == 1
+    same_note = err.same_pitch_notes[0]
+    assert same_note["pitch"] == 60
+    assert same_note["start_step"] == 4
+    assert same_note["matched"] is True
+    assert same_note["match_type"] == "exact"
+
+
+def test_print_repeat_errors_list(capsys):
+    """Verify print_repeat_errors_list prints detailed timing and context."""
+    err = RepeatErrorDetail(
+        step=6,
+        time_sec=0.75,
+        beat=1.5,
+        pitch=60,
+        pitch_name="C4",
+        same_pitch_notes=[
+            {
+                "pitch": 60,
+                "pitch_name": "C4",
+                "start_step": 4,
+                "start_beat": 1.0,
+                "duration_beats": 2.0,
+                "duration_steps": 8,
+                "end_step": 12,
+                "end_beat": 3.0,
+                "matched": True,
+                "match_type": "exact",
+            }
+        ],
+        other_notes=[
+            {
+                "pitch": 64,
+                "pitch_name": "E4",
+                "start_step": 4,
+                "start_beat": 1.0,
+                "duration_beats": 1.0,
+                "duration_steps": 4,
+                "end_step": 8,
+                "end_beat": 2.0,
+                "matched": True,
+                "match_type": "exact",
+            }
+        ],
+    )
+
+    print_repeat_errors_list([err])
+    out = capsys.readouterr().out
+    assert "REPEAT ERROR DETAILS" in out
+    assert "Step: 6" in out
+    assert "Struck: Pitch 60  (C4)" in out
+    assert "Target notes with SAME pitch in window:" in out
+    assert "Pitch 60" in out
+    assert "Pitch 64" in out
+
 
 
 

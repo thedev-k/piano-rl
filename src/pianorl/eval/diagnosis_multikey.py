@@ -17,7 +17,19 @@ import numpy as np
 from pianorl.env.multi_keys_env import MultiKeyPianoEnv
 from pianorl.env.free_keys_env import split_observation, RewardConfig
 from pianorl.eval.players import PPOPlayer
-from pianorl.score import Score, NUM_PIANO_KEYS, load_score
+from pianorl.score import Score, NUM_PIANO_KEYS, load_score, pitch_to_note_name
+
+
+@dataclass
+class RepeatErrorDetail:
+    """Detailed record of a wrong press classified as Repeat."""
+    step: int
+    time_sec: float
+    beat: float
+    pitch: int
+    pitch_name: str
+    same_pitch_notes: List[dict]
+    other_notes: List[dict]
 
 
 def categorize_multikey_wrong_press(
@@ -256,7 +268,12 @@ def run_multikey_midi_segment_diagnosis(
     score_or_path: Union[str, Path, Score],
     split_seconds: Optional[Union[float, List[float]]] = 30.0,
     segment_seconds: Optional[float] = None,
-) -> Tuple[Dict[str, MultiKeyDiagnosisStats], Score]:
+    return_repeat_errors: bool = False,
+    repeat_window_beats: float = 0.5,
+) -> Union[
+    Tuple[Dict[str, MultiKeyDiagnosisStats], Score],
+    Tuple[Dict[str, MultiKeyDiagnosisStats], Score, List[RepeatErrorDetail]],
+]:
     """Diagnose error patterns and chord hit rates for a single MIDI/score piece split across time segments.
 
     Parameters
@@ -265,11 +282,14 @@ def run_multikey_midi_segment_diagnosis(
     score_or_path : Path to MIDI / JSON score file, or an existing Score instance.
     split_seconds : Boundary cutoff second(s), e.g. 30.0 for [0s-30s, 30s-end].
     segment_seconds : Uniform segment duration in seconds, e.g. 30.0 for [0s-30s, 30s-60s, ...]. Overrides split_seconds.
+    return_repeat_errors : If True, also return a list of RepeatErrorDetail records for every repeat strike.
+    repeat_window_beats : Half-window size in beats for active score note context (default: 0.5 beats = +-2 steps).
 
     Returns
     -------
     results : Dict mapping segment label (e.g. '0.0s - 30.0s', 'Overall') to MultiKeyDiagnosisStats.
     score : The loaded Score instance.
+    repeat_errors : (Optional, if return_repeat_errors is True) List of RepeatErrorDetail objects.
     """
     if isinstance(player_or_path, (str, Path)):
         player = PPOPlayer(player_or_path)
@@ -366,6 +386,7 @@ def run_multikey_midi_segment_diagnosis(
     terminated = False
     truncated = False
     prev_wrong = 0
+    repeat_events: List[Tuple[int, int]] = []
 
     while not (terminated or truncated):
         step_before = env.current_step
@@ -400,6 +421,8 @@ def run_multikey_midi_segment_diagnosis(
                     if cat == "repeat":
                         segment_stats[seg_idx].wrong_repeat += 1
                         overall_stats.wrong_repeat += 1
+                        if return_repeat_errors:
+                            repeat_events.append((step_before, p))
                     elif cat == "neighbor_key":
                         segment_stats[seg_idx].wrong_neighbor_key += 1
                         overall_stats.wrong_neighbor_key += 1
@@ -440,4 +463,119 @@ def run_multikey_midi_segment_diagnosis(
     for (_, _, label), stats in zip(intervals, segment_stats):
         results[label] = stats
     results["Overall"] = overall_stats
+
+    if return_repeat_errors:
+        repeat_errors: List[RepeatErrorDetail] = []
+        window_steps = int(round(repeat_window_beats * steps_per_beat))
+
+        for step_idx, struck_pitch in repeat_events:
+            t_sec = step_idx * sec_per_step
+            t_beat = step_idx / steps_per_beat
+            p_name = pitch_to_note_name(struck_pitch)
+
+            same_pitch_notes = []
+            other_notes = []
+
+            min_s = max(0, step_idx - getattr(env, "_max_dur_steps", 16) - window_steps)
+            max_s = step_idx + window_steps
+            for s in range(min_s, max_s + 1):
+                for t in env._targets_by_step.get(s, []):
+                    dur_steps = max(1, int(round(t["duration_beats"] * steps_per_beat)))
+                    end_step = t["start_step"] + dur_steps
+                    if t["start_step"] <= step_idx + window_steps and end_step >= step_idx - window_steps:
+                        note_info = {
+                            "pitch": t["pitch"],
+                            "pitch_name": pitch_to_note_name(t["pitch"]),
+                            "start_step": t["start_step"],
+                            "start_beat": t["start_step"] / steps_per_beat,
+                            "duration_beats": t["duration_beats"],
+                            "duration_steps": dur_steps,
+                            "end_step": end_step,
+                            "end_beat": end_step / steps_per_beat,
+                            "matched": t["matched"],
+                            "match_type": t.get("match_type"),
+                        }
+                        if t["pitch"] == struck_pitch:
+                            same_pitch_notes.append(note_info)
+                        else:
+                            other_notes.append(note_info)
+
+            same_pitch_notes.sort(key=lambda x: x["start_step"])
+            other_notes.sort(key=lambda x: (x["start_step"], x["pitch"]))
+
+            repeat_errors.append(
+                RepeatErrorDetail(
+                    step=step_idx,
+                    time_sec=t_sec,
+                    beat=t_beat,
+                    pitch=struck_pitch,
+                    pitch_name=p_name,
+                    same_pitch_notes=same_pitch_notes,
+                    other_notes=other_notes,
+                )
+            )
+
+        return results, score, repeat_errors
+
     return results, score
+
+
+def print_repeat_errors_list(
+    repeat_errors: List[RepeatErrorDetail],
+    window_beats: float = 0.5,
+    max_other_notes: int = 8,
+) -> None:
+    """Print a clear, human-readable list of Repeat errors with timing and active score notes."""
+    print("=" * 125)
+    print(
+        f"REPEAT ERROR DETAILS (Total: {len(repeat_errors)} instances, "
+        f"active window: ±{window_beats:.2f} beats / ±{int(round(window_beats * 4))} steps)"
+    )
+    print("=" * 125)
+
+    if not repeat_errors:
+        print("  No repeat errors detected! The model made 0 double-strikes.\n")
+        return
+
+    for idx, err in enumerate(repeat_errors, 1):
+        print(
+            f"[{idx:>3}] Step: {err.step:<5} | Time: {err.time_sec:6.2f}s (Beat {err.beat:6.2f}) | "
+            f"Struck: Pitch {err.pitch:<3} ({err.pitch_name})"
+        )
+
+        if err.same_pitch_notes:
+            print("      Target notes with SAME pitch in window:")
+            for note in err.same_pitch_notes:
+                match_str = f"Matched: {note['matched']}"
+                if note.get("match_type"):
+                    match_str += f" ({note['match_type']})"
+                print(
+                    f"        -> Pitch {note['pitch']:<3} ({note['pitch_name']:<3}) | "
+                    f"Beat {note['start_beat']:6.2f} - {note['end_beat']:6.2f} "
+                    f"(Step {note['start_step']:<5} - {note['end_step']:<5}, dur {note['duration_beats']:.2f}b) | "
+                    f"{match_str}"
+                )
+        else:
+            print("      Target notes with SAME pitch in window: None (struck unprovoked)")
+
+        if err.other_notes:
+            num_other = len(err.other_notes)
+            shown_notes = err.other_notes[:max_other_notes]
+            print(f"      Other active score notes in window ({num_other} total):")
+            for note in shown_notes:
+                match_str = f"Matched: {note['matched']}"
+                if note.get("match_type"):
+                    match_str += f" ({note['match_type']})"
+                print(
+                    f"           Pitch {note['pitch']:<3} ({note['pitch_name']:<3}) | "
+                    f"Beat {note['start_beat']:6.2f} - {note['end_beat']:6.2f} "
+                    f"(Step {note['start_step']:<5} - {note['end_step']:<5}, dur {note['duration_beats']:.2f}b) | "
+                    f"{match_str}"
+                )
+            if num_other > max_other_notes:
+                print(f"           ... and {num_other - max_other_notes} more concurrent notes in chord")
+        else:
+            print("      Other active score notes in window: None")
+
+        print("-" * 125)
+    print()

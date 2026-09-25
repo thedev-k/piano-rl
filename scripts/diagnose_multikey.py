@@ -9,6 +9,7 @@ from pianorl.eval.diagnosis_multikey import (
     MultiKeyDiagnosisStats,
     run_multikey_diagnosis,
     run_multikey_midi_segment_diagnosis,
+    print_repeat_errors_list,
 )
 from pianorl.score import load_score
 from pianorl.data import normalize_level_tag
@@ -130,11 +131,20 @@ def main():
         default=None,
         help="Optional uniform segment width in seconds (e.g. 30.0 for every 30 seconds). Overrides --split-seconds.",
     )
+    parser.add_argument(
+        "--list-repeat-errors",
+        action="store_true",
+        default=False,
+        help="Print details of every Repeat error (timestep, pitch, and true score notes active within +-0.5 beats). Requires --midi-path.",
+    )
     args = parser.parse_args()
 
     model_file = Path(args.model_path)
     if not model_file.exists():
         raise FileNotFoundError(f"Model file not found at '{model_file}'")
+
+    if args.list_repeat_errors and not args.midi_path:
+        parser.error("--list-repeat-errors requires --midi-path to be specified.")
 
     if args.midi_path:
         midi_file = Path(args.midi_path)
@@ -152,12 +162,22 @@ def main():
         dur_sec = max_end_beat * sec_per_beat
 
         print(f"Running multi-key diagnosis with {model_file.name} across time segments...")
-        results, _ = run_multikey_midi_segment_diagnosis(
-            player_or_path=model_file,
-            score_or_path=score,
-            split_seconds=split_sec_list,
-            segment_seconds=args.segment_seconds,
-        )
+        if args.list_repeat_errors:
+            results, _, repeat_errors = run_multikey_midi_segment_diagnosis(
+                player_or_path=model_file,
+                score_or_path=score,
+                split_seconds=split_sec_list,
+                segment_seconds=args.segment_seconds,
+                return_repeat_errors=True,
+            )
+        else:
+            results, _ = run_multikey_midi_segment_diagnosis(
+                player_or_path=model_file,
+                score_or_path=score,
+                split_seconds=split_sec_list,
+                segment_seconds=args.segment_seconds,
+                return_repeat_errors=False,
+            )
 
         print_multikey_midi_segment_table(
             results=results,
@@ -166,6 +186,10 @@ def main():
             duration_seconds=dur_sec,
             total_notes=results["Overall"].total_notes,
         )
+
+        if args.list_repeat_errors:
+            print_repeat_errors_list(repeat_errors)
+
         return
 
     manifest_file = Path("data/manifest_multikey.json")
