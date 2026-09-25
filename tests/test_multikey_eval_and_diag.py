@@ -16,6 +16,7 @@ from pianorl.eval import (
 from pianorl.eval.diagnosis_multikey import (
     categorize_multikey_wrong_press,
     run_multikey_diagnosis,
+    run_multikey_midi_segment_diagnosis,
 )
 from pianorl.agent import MultiKeyTensorboardCallback
 
@@ -230,5 +231,85 @@ def test_print_checkpoint_progression_table(capsys):
     assert "checkpoint_804800_steps" in captured
     assert "95.0%" in captured
     assert "88.0%" in captured
+
+
+def test_run_multikey_midi_segment_diagnosis():
+    """Verify run_multikey_midi_segment_diagnosis correctly splits piece into time segments."""
+    score = generate_multi_key_score(3, seed=42)  # Triads
+    player = PerfectMultiPlayer()
+
+    # Split at 2.0 seconds
+    results, returned_score = run_multikey_midi_segment_diagnosis(
+        player_or_path=player,
+        score_or_path=score,
+        split_seconds=[2.0],
+    )
+
+    assert returned_score is score
+    assert "Overall" in results
+    seg_keys = [k for k in results.keys() if k != "Overall"]
+    assert len(seg_keys) == 2
+    assert seg_keys[0].startswith("0.0s - 2.0s")
+
+    overall = results["Overall"]
+    assert overall.total_notes > 0
+    assert overall.hits_exact == overall.total_notes
+    assert overall.total_wrong == 0
+    assert overall.full_chord_hit_rate == 1.0
+
+    # Ensure segment sums equal overall stats
+    sum_notes = sum(results[k].total_notes for k in seg_keys)
+    sum_hits = sum(results[k].hits_exact for k in seg_keys)
+    sum_presses = sum(results[k].total_presses for k in seg_keys)
+    assert sum_notes == overall.total_notes
+    assert sum_hits == overall.hits_exact
+    assert sum_presses == overall.total_presses
+
+
+def test_print_multikey_midi_segment_table(capsys):
+    """Verify print_multikey_midi_segment_table prints nicely formatted segment output."""
+    from scripts.diagnose_multikey import print_multikey_midi_segment_table
+    from pianorl.eval.diagnosis_multikey import MultiKeyDiagnosisStats
+
+    s1 = MultiKeyDiagnosisStats(
+        pieces_count=1,
+        total_notes=10,
+        total_presses=10,
+        hits_exact=10,
+        chord_steps_total=2,
+        chord_steps_all_hit=2,
+    )
+    s2 = MultiKeyDiagnosisStats(
+        pieces_count=1,
+        total_notes=20,
+        total_presses=22,
+        hits_exact=18,
+        wrong_neighbor_key=2,
+        chord_steps_total=5,
+        chord_steps_all_hit=4,
+    )
+    overall = s1.add(s2)
+
+    results = {
+        "0.0s - 30.0s": s1,
+        "30.0s - 60.0s": s2,
+        "Overall": overall,
+    }
+
+    print_multikey_midi_segment_table(
+        results=results,
+        model_path=Path("final.zip"),
+        midi_path=Path("rush_e.mid"),
+        duration_seconds=60.0,
+        total_notes=30,
+    )
+
+    captured = capsys.readouterr().out
+    assert "MULTI-KEY MIDI DIAGNOSTIC REPORT" in captured
+    assert "0.0s - 30.0s" in captured
+    assert "30.0s - 60.0s" in captured
+    assert "Overall" in captured
+    assert "rush_e.mid" in captured
+
 
 

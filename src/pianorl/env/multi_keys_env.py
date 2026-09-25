@@ -132,15 +132,17 @@ class MultiKeyPianoEnv(gym.Env):
 
     def _is_neighbor_key(self, pressed_pitch: int, current_step: int) -> bool:
         """Check if an unmatched struck pitch is within 1-2 semitones of an active or nearby target note."""
-        for target in self.targets:
-            dur_steps = max(1, int(round(target["duration_beats"] * self.steps_per_beat)))
-            # Check if target starts within +-2 steps OR is currently sounding (active)
-            is_active_or_nearby = (
-                abs(target["start_step"] - current_step) <= 2
-                or (target["start_step"] <= current_step < target["start_step"] + dur_steps)
-            )
-            if is_active_or_nearby and 1 <= abs(target["pitch"] - pressed_pitch) <= 2:
-                return True
+        min_s = max(0, current_step - getattr(self, "_max_dur_steps", 16))
+        max_s = current_step + 2
+        for s in range(min_s, max_s + 1):
+            for target in self._targets_by_step.get(s, []):
+                dur_steps = max(1, int(round(target["duration_beats"] * self.steps_per_beat)))
+                is_active_or_nearby = (
+                    abs(target["start_step"] - current_step) <= 2
+                    or (target["start_step"] <= current_step < target["start_step"] + dur_steps)
+                )
+                if is_active_or_nearby and 1 <= abs(target["pitch"] - pressed_pitch) <= 2:
+                    return True
         return False
 
     def _get_info(self) -> dict:
@@ -184,6 +186,8 @@ class MultiKeyPianoEnv(gym.Env):
 
         # Setup note targets for evaluation
         self.targets = []
+        self._targets_by_step = {}
+        self._max_dur_steps = 1
         seen_targets = set()
         for note in self.current_score.notes:
             start_step = int(round(note.start_beat * self.steps_per_beat))
@@ -191,16 +195,20 @@ class MultiKeyPianoEnv(gym.Env):
             if key in seen_targets:
                 continue
             seen_targets.add(key)
-            self.targets.append(
-                {
-                    "pitch": note.pitch,
-                    "start_step": start_step,
-                    "duration_beats": note.duration_beats,
-                    "velocity": getattr(note, "velocity", 80),
-                    "matched": False,
-                    "missed_penalized": False,
-                }
-            )
+            dur_steps = max(1, int(round(note.duration_beats * self.steps_per_beat)))
+            if dur_steps > self._max_dur_steps:
+                self._max_dur_steps = dur_steps
+            t_entry = {
+                "pitch": note.pitch,
+                "start_step": start_step,
+                "duration_beats": note.duration_beats,
+                "velocity": getattr(note, "velocity", 80),
+                "matched": False,
+                "match_type": None,
+                "missed_penalized": False,
+            }
+            self.targets.append(t_entry)
+            self._targets_by_step.setdefault(start_step, []).append(t_entry)
 
         max_start = max((t["start_step"] for t in self.targets), default=0)
         self.end_step = max_start + 2 if self.targets else 0
@@ -234,19 +242,17 @@ class MultiKeyPianoEnv(gym.Env):
         unmatched_strikes = []
 
         # 2. Match exact timing hits first (target start_step == t)
+        targets_at_t = self._targets_by_step.get(t, [])
         for pitch in struck_pitches:
             exact_match = None
-            for target in self.targets:
-                if (
-                    not target["matched"]
-                    and target["pitch"] == pitch
-                    and target["start_step"] == t
-                ):
+            for target in targets_at_t:
+                if not target["matched"] and target["pitch"] == pitch:
                     exact_match = target
                     break
 
             if exact_match is not None:
                 exact_match["matched"] = True
+                exact_match["match_type"] = "exact"
                 step_reward += self.reward_config.hit_exact
                 self.hits_exact += 1
             else:
@@ -254,20 +260,24 @@ class MultiKeyPianoEnv(gym.Env):
 
         # 3. Match off-by-one timing hits (|target start_step - t| == 1)
         still_unmatched_strikes = []
+        targets_prev = self._targets_by_step.get(t - 1, [])
+        targets_next = self._targets_by_step.get(t + 1, [])
         for pitch in unmatched_strikes:
             off_match = None
             # Prioritize matching earlier note (t - 1) before late note (t + 1)
-            for target in self.targets:
-                if (
-                    not target["matched"]
-                    and target["pitch"] == pitch
-                    and abs(target["start_step"] - t) == 1
-                ):
+            for target in targets_prev:
+                if not target["matched"] and target["pitch"] == pitch:
                     off_match = target
                     break
+            if off_match is None:
+                for target in targets_next:
+                    if not target["matched"] and target["pitch"] == pitch:
+                        off_match = target
+                        break
 
             if off_match is not None:
                 off_match["matched"] = True
+                off_match["match_type"] = "off"
                 step_reward += self.reward_config.hit_off_by_one
                 self.hits_off_by_one += 1
             else:
@@ -283,12 +293,12 @@ class MultiKeyPianoEnv(gym.Env):
 
         # 5. Check for newly missed notes
         # A note is missed if unmatched and current step is beyond its grace window (t >= start_step + 1)
-        for target in self.targets:
+        # Only notes starting at t - 1 cross this boundary at step t
+        for target in targets_prev:
             if not target["matched"] and not target["missed_penalized"]:
-                if t >= target["start_step"] + 1:
-                    target["missed_penalized"] = True
-                    step_reward += self.reward_config.miss
-                    self.missed_notes += 1
+                target["missed_penalized"] = True
+                step_reward += self.reward_config.miss
+                self.missed_notes += 1
 
         # 6. Check termination (episode ends 2 steps after last note's start step)
         terminated = t >= self.end_step

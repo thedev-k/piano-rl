@@ -11,13 +11,13 @@ Also measures presses per note and full-chord completion rate (share of chords w
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 
 from pianorl.env.multi_keys_env import MultiKeyPianoEnv
 from pianorl.env.free_keys_env import split_observation, RewardConfig
 from pianorl.eval.players import PPOPlayer
-from pianorl.score import Score, NUM_PIANO_KEYS
+from pianorl.score import Score, NUM_PIANO_KEYS, load_score
 
 
 def categorize_multikey_wrong_press(
@@ -249,3 +249,195 @@ def run_multikey_diagnosis(
 
     results = {**level_stats, "Overall": overall_stats}
     return results
+
+
+def run_multikey_midi_segment_diagnosis(
+    player_or_path: Union[str, Path, object],
+    score_or_path: Union[str, Path, Score],
+    split_seconds: Optional[Union[float, List[float]]] = 30.0,
+    segment_seconds: Optional[float] = None,
+) -> Tuple[Dict[str, MultiKeyDiagnosisStats], Score]:
+    """Diagnose error patterns and chord hit rates for a single MIDI/score piece split across time segments.
+
+    Parameters
+    ----------
+    player_or_path : PPO model path or player instance with .act(obs).
+    score_or_path : Path to MIDI / JSON score file, or an existing Score instance.
+    split_seconds : Boundary cutoff second(s), e.g. 30.0 for [0s-30s, 30s-end].
+    segment_seconds : Uniform segment duration in seconds, e.g. 30.0 for [0s-30s, 30s-60s, ...]. Overrides split_seconds.
+
+    Returns
+    -------
+    results : Dict mapping segment label (e.g. '0.0s - 30.0s', 'Overall') to MultiKeyDiagnosisStats.
+    score : The loaded Score instance.
+    """
+    if isinstance(player_or_path, (str, Path)):
+        player = PPOPlayer(player_or_path)
+    else:
+        player = player_or_path
+
+    if isinstance(score_or_path, (str, Path)):
+        score = load_score(score_or_path)
+    else:
+        score = score_or_path
+
+    tempo = float(score.tempo_bpm) if (score.tempo_bpm and score.tempo_bpm > 0) else 120.0
+    steps_per_beat = 4
+    sec_per_beat = 60.0 / tempo
+    sec_per_step = sec_per_beat / steps_per_beat
+
+    # Calculate total duration in seconds
+    max_end_beat = max((n.start_beat + n.duration_beats for n in score.notes), default=0.0)
+    duration_seconds = max_end_beat * sec_per_beat
+
+    # Construct segment intervals: [(start_sec, end_sec, label), ...]
+    intervals: List[Tuple[float, float, str]] = []
+    if segment_seconds is not None and segment_seconds > 0:
+        cur = 0.0
+        while cur < duration_seconds:
+            nxt = min(cur + segment_seconds, duration_seconds)
+            intervals.append((cur, nxt, f"{cur:.1f}s - {nxt:.1f}s"))
+            if nxt >= duration_seconds:
+                break
+            cur = nxt
+    else:
+        if split_seconds is None:
+            split_list = [30.0]
+        elif isinstance(split_seconds, (int, float)):
+            split_list = [float(split_seconds)]
+        else:
+            split_list = sorted([float(s) for s in split_seconds])
+
+        valid_cutoffs = sorted(set(s for s in split_list if 0 < s < duration_seconds))
+        prev = 0.0
+        for c in valid_cutoffs:
+            intervals.append((prev, c, f"{prev:.1f}s - {c:.1f}s"))
+            prev = c
+        intervals.append((prev, duration_seconds, f"{prev:.1f}s - {duration_seconds:.1f}s"))
+
+    if not intervals:
+        intervals.append((0.0, max(duration_seconds, 1.0), f"0.0s - {max(duration_seconds, 1.0):.1f}s"))
+
+    num_intervals = len(intervals)
+    segment_stats = [MultiKeyDiagnosisStats(pieces_count=1) for _ in range(num_intervals)]
+    overall_stats = MultiKeyDiagnosisStats(pieces_count=1)
+
+    def find_interval_idx(t_sec: float) -> int:
+        for idx, (s, e, _) in enumerate(intervals):
+            if idx == num_intervals - 1:
+                if t_sec >= s:
+                    return idx
+            else:
+                if s <= t_sec < e:
+                    return idx
+        return num_intervals - 1
+
+    standard_rewards = RewardConfig(
+        hit_exact=1.0,
+        hit_off_by_one=0.5,
+        wrong_press=-0.5,
+        miss=-1.0,
+    )
+    env = MultiKeyPianoEnv(scores=[score], seed=42, reward_config=standard_rewards)
+    obs, info = env.reset(options={"piece_index": 0})
+    targets = env.targets
+
+    # 1. Attribute targets to segments
+    for t in targets:
+        t_sec = t["start_step"] * sec_per_step
+        seg_idx = find_interval_idx(t_sec)
+        segment_stats[seg_idx].total_notes += 1
+        overall_stats.total_notes += 1
+
+    # 2. Track chords
+    step_target_counts: Dict[int, int] = {}
+    for t in targets:
+        s = t["start_step"]
+        step_target_counts[s] = step_target_counts.get(s, 0) + 1
+
+    chord_steps = [s for s, cnt in step_target_counts.items() if cnt >= 2]
+    for s in chord_steps:
+        s_sec = s * sec_per_step
+        seg_idx = find_interval_idx(s_sec)
+        segment_stats[seg_idx].chord_steps_total += 1
+        overall_stats.chord_steps_total += 1
+
+    # 3. Step through the score
+    terminated = False
+    truncated = False
+    prev_wrong = 0
+
+    while not (terminated or truncated):
+        step_before = env.current_step
+        step_sec = step_before * sec_per_step
+        seg_idx = find_interval_idx(step_sec)
+
+        obs_before = obs
+        action = player.act(obs)
+
+        act_arr = np.asarray(action)
+        struck_pitches = [21 + k for k in range(NUM_PIANO_KEYS) if act_arr[k] > 0]
+
+        segment_stats[seg_idx].total_presses += len(struck_pitches)
+        overall_stats.total_presses += len(struck_pitches)
+
+        obs, reward, terminated, truncated, info = env.step(act_arr)
+
+        curr_wrong = info["wrong_presses"]
+        if curr_wrong > prev_wrong:
+            # Check which pitches were unmatched
+            for p in struck_pitches:
+                matched = any(
+                    t["matched"] and t["pitch"] == p and abs(t["start_step"] - step_before) <= 1
+                    for t in (
+                        env._targets_by_step.get(step_before, [])
+                        + env._targets_by_step.get(step_before - 1, [])
+                        + env._targets_by_step.get(step_before + 1, [])
+                    )
+                )
+                if not matched:
+                    cat = categorize_multikey_wrong_press(p, step_before, targets, obs_before)
+                    if cat == "repeat":
+                        segment_stats[seg_idx].wrong_repeat += 1
+                        overall_stats.wrong_repeat += 1
+                    elif cat == "neighbor_key":
+                        segment_stats[seg_idx].wrong_neighbor_key += 1
+                        overall_stats.wrong_neighbor_key += 1
+                    elif cat == "not_in_window":
+                        segment_stats[seg_idx].wrong_not_in_window += 1
+                        overall_stats.wrong_not_in_window += 1
+                    else:
+                        segment_stats[seg_idx].wrong_no_note_nearby += 1
+                        overall_stats.wrong_no_note_nearby += 1
+
+            prev_wrong = curr_wrong
+
+    # 4. Attribute hits and misses
+    for t in targets:
+        t_sec = t["start_step"] * sec_per_step
+        seg_idx = find_interval_idx(t_sec)
+        m_type = t.get("match_type")
+        if m_type == "exact":
+            segment_stats[seg_idx].hits_exact += 1
+            overall_stats.hits_exact += 1
+        elif m_type == "off":
+            segment_stats[seg_idx].hits_off_by_one += 1
+            overall_stats.hits_off_by_one += 1
+        else:
+            segment_stats[seg_idx].missed_notes += 1
+            overall_stats.missed_notes += 1
+
+    # 5. Check chord completion
+    for s in chord_steps:
+        s_sec = s * sec_per_step
+        seg_idx = find_interval_idx(s_sec)
+        chord_targets = env._targets_by_step.get(s, [])
+        if all(t["matched"] for t in chord_targets):
+            segment_stats[seg_idx].chord_steps_all_hit += 1
+            overall_stats.chord_steps_all_hit += 1
+
+    results: Dict[str, MultiKeyDiagnosisStats] = {}
+    for (_, _, label), stats in zip(intervals, segment_stats):
+        results[label] = stats
+    results["Overall"] = overall_stats
+    return results, score

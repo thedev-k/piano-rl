@@ -39,17 +39,32 @@ class ScoreWindow:
         self.num_slots = n_beats * steps_per_beat
         self._warned_pitches = set()
 
+        # Pre-index valid notes by start_step for high performance on large scores
+        self._notes_by_step = {}
+        self._out_of_range_notes = []
+        self._max_dur_steps = 1
+        for note in self.score.notes:
+            if note.pitch < MIN_PIANO_PITCH or note.pitch > MAX_PIANO_PITCH:
+                self._out_of_range_notes.append(note)
+                continue
+
+            row = note.pitch - MIN_PIANO_PITCH
+            start_step = int(round(note.start_beat * self.steps_per_beat))
+            dur_steps = max(1, int(round(note.duration_beats * self.steps_per_beat)))
+            end_step = start_step + dur_steps
+            if dur_steps > self._max_dur_steps:
+                self._max_dur_steps = dur_steps
+            self._notes_by_step.setdefault(start_step, []).append((row, start_step, end_step))
+
     def total_steps(self) -> int:
         """Return how many time steps the entire piece lasts."""
         if not self.score.notes:
             return 0
         max_step = 0
-        for note in self.score.notes:
-            start_step = int(round(note.start_beat * self.steps_per_beat))
-            dur_steps = max(1, int(round(note.duration_beats * self.steps_per_beat)))
-            end_step = start_step + dur_steps
-            if end_step > max_step:
-                max_step = end_step
+        for step_notes in self._notes_by_step.values():
+            for _, _, end_step in step_notes:
+                if end_step > max_step:
+                    max_step = end_step
         return max_step
 
     def get_window(self, current_step: int) -> np.ndarray:
@@ -68,43 +83,39 @@ class ScoreWindow:
         # Always return fixed shape (2, 88, num_slots)
         window = np.zeros((2, NUM_PIANO_KEYS, self.num_slots), dtype=np.float32)
 
+        for note in self._out_of_range_notes:
+            if note.pitch not in self._warned_pitches:
+                warning_msg = (
+                    f"Note pitch {note.pitch} ({note.note_name}) is outside "
+                    f"the 88-key piano range ({MIN_PIANO_PITCH}-{MAX_PIANO_PITCH}). Ignoring note."
+                )
+                print(f"WARNING: {warning_msg}")
+                warnings.warn(warning_msg, UserWarning, stacklevel=2)
+                self._warned_pitches.add(note.pitch)
+
         window_start = current_step
         window_end = current_step + self.num_slots
 
-        for note in self.score.notes:
-            # Check 88-key piano limits
-            if note.pitch < MIN_PIANO_PITCH or note.pitch > MAX_PIANO_PITCH:
-                if note.pitch not in self._warned_pitches:
-                    warning_msg = (
-                        f"Note pitch {note.pitch} ({note.note_name}) is outside "
-                        f"the 88-key piano range ({MIN_PIANO_PITCH}-{MAX_PIANO_PITCH}). Ignoring note."
-                    )
-                    print(f"WARNING: {warning_msg}")
-                    warnings.warn(warning_msg, UserWarning, stacklevel=2)
-                    self._warned_pitches.add(note.pitch)
+        # Only inspect steps that could overlap with [window_start, window_end)
+        min_start = max(0, window_start - self._max_dur_steps)
+        for s in range(min_start, window_end):
+            step_notes = self._notes_by_step.get(s)
+            if not step_notes:
                 continue
+            for row, start_step, end_step in step_notes:
+                if end_step <= window_start or start_step >= window_end:
+                    continue
 
-            row = note.pitch - MIN_PIANO_PITCH
+                # Populate time slots inside this window
+                for slot in range(self.num_slots):
+                    abs_step = window_start + slot
 
-            # Convert note beat timing to discrete steps
-            start_step = int(round(note.start_beat * self.steps_per_beat))
-            dur_steps = max(1, int(round(note.duration_beats * self.steps_per_beat)))
-            end_step = start_step + dur_steps
+                    # Channel 0: Onset (note starts at this exact step)
+                    if abs_step == start_step:
+                        window[0, row, slot] = 1.0
 
-            # Quick check: does this note overlap with our window at all?
-            if end_step <= window_start or start_step >= window_end:
-                continue
-
-            # Populate time slots inside this window
-            for slot in range(self.num_slots):
-                abs_step = window_start + slot
-
-                # Channel 0: Onset (note starts at this exact step)
-                if abs_step == start_step:
-                    window[0, row, slot] = 1.0
-
-                # Channel 1: Sounding (note is active/held at this step)
-                if start_step <= abs_step < end_step:
-                    window[1, row, slot] = 1.0
+                    # Channel 1: Sounding (note is active/held at this step)
+                    if start_step <= abs_step < end_step:
+                        window[1, row, slot] = 1.0
 
         return window
