@@ -34,7 +34,7 @@ def generate_multikey_dataset(
     train_count: int = TRAIN_COUNT,
     heldout_count: int = HELDOUT_COUNT,
 ) -> List[Dict]:
-    """Generate and save multi-key polyphony dataset for specified levels (1M to 9M)."""
+    """Generate and save multi-key polyphony dataset for specified levels (1M to 10M)."""
     train_dir = output_base / "multikey_train"
     heldout_dir = output_base / "multikey_heldout"
     train_dir.mkdir(parents=True, exist_ok=True)
@@ -42,7 +42,7 @@ def generate_multikey_dataset(
 
     target_levels: List[int] = []
     if levels is None:
-        target_levels = list(range(1, 10))
+        target_levels = list(range(1, 11))
     else:
         for lvl in levels:
             clean = str(lvl).upper().rstrip("M")

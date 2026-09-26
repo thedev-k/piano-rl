@@ -69,9 +69,9 @@ def test_level_name_formats():
     with pytest.raises(ValueError):
         generate_multi_key_score(0)
     with pytest.raises(ValueError):
-        generate_multi_key_score(10)
+        generate_multi_key_score(11)
     with pytest.raises(ValueError):
-        generate_multi_key_score("10M")
+        generate_multi_key_score("11M")
     with pytest.raises(ValueError):
         generate_multi_key_score("invalid")
     with pytest.raises(TypeError):

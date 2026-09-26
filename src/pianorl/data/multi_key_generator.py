@@ -534,6 +534,74 @@ def generate_level_9m(rng: random.Random) -> Score:
     return Score(notes=notes, tempo_bpm=tempo)
 
 
+def generate_level_10m(rng: random.Random) -> Score:
+    """Level 10M: Sustained-note interruptions (80-110 BPM, 32 beats).
+
+    Features a steady bass accompaniment with a treble line consisting of long/held notes
+    interrupted by fast, short notes (16th-32nd) starting within ±2 semitones of the held
+    note while it's still sounding.
+    """
+    tempo = float(rng.randint(80, 110))
+    total_beats = 32.0
+
+    root = rng.randint(48, 60)
+    is_minor = rng.random() < 0.5
+
+    notes: List[NoteEvent] = []
+
+    # Voice 1: Steady bass accompaniment (8th notes)
+    beat = 0.0
+    bass_pitch = root - 12
+    while beat < total_beats:
+        notes.append(
+            NoteEvent(
+                pitch=_clamp_pitch(bass_pitch),
+                start_beat=round(beat, 4),
+                duration_beats=0.5,
+            )
+        )
+        beat += 0.5
+        bass_pitch = _clamp_pitch(root - 12 + rng.choice([0, 3, 4, 7, 12, -5, -8]))
+
+    # Voice 2: Sustained notes with fast neighbor interruptions
+    beat = 0.0
+    treble_pos = root + 12
+    while beat < total_beats:
+        dur = float(rng.choice([1.0, 1.5, 2.0, 3.0]))
+        dur = min(dur, total_beats - beat)
+
+        notes.append(
+            NoteEvent(
+                pitch=_clamp_pitch(treble_pos),
+                start_beat=round(beat, 4),
+                duration_beats=dur,
+            )
+        )
+
+        # 1 to 3 fast interruptions
+        num_interruptions = rng.randint(1, int(dur) + 1)
+        for _ in range(num_interruptions):
+            short_dur = rng.choice([0.125, 0.25])
+            # offset from start, at least an 8th note in, but before it ends
+            if dur - short_dur > 0.125:
+                offset = round(rng.uniform(0.125, dur - short_dur), 4)
+                pitch_diff = rng.choice([-2, -1, 1, 2])
+                short_pitch = _clamp_pitch(treble_pos + pitch_diff)
+                notes.append(
+                    NoteEvent(
+                        pitch=short_pitch,
+                        start_beat=round(beat + offset, 4),
+                        duration_beats=short_dur,
+                    )
+                )
+
+        beat += dur
+        treble_pos = _clamp_pitch(treble_pos + rng.choice([-5, -3, -2, 2, 3, 5]))
+
+    notes.sort(key=lambda n: (round(n.start_beat, 4), n.pitch))
+    return Score(notes=notes, tempo_bpm=tempo)
+
+
 def _deduplicate_notes(notes: List[NoteEvent]) -> List[NoteEvent]:
     """Merge duplicate notes with the exact same pitch and start beat (unisons).
 
@@ -562,10 +630,10 @@ def normalize_level_tag(lvl: Union[int, str]) -> str:
 def generate_multi_key_score(
     level: Union[int, str], seed: Optional[int] = None
 ) -> Score:
-    """Generate a procedural polyphonic musical Score for a given multi-key level (1M to 9M).
+    """Generate a procedural polyphonic musical Score for a given multi-key level (1M to 10M).
 
     Args:
-        level: Level identifier: integer 1..9 or string "1M".."9M" (case-insensitive).
+        level: Level identifier: integer 1..10 or string "1M".."10M" (case-insensitive).
         seed: Optional random seed for deterministic reproducibility.
 
     Returns:
@@ -577,16 +645,16 @@ def generate_multi_key_score(
             lvl_num = int(clean_lvl)
         except ValueError:
             raise ValueError(
-                f"Invalid level '{level}'. Expected 1..9 or '1M'..'9M'."
+                f"Invalid level '{level}'. Expected 1..10 or '1M'..'10M'."
             )
     elif isinstance(level, int):
         lvl_num = level
     else:
         raise TypeError(f"Level must be int or str, got {type(level)}")
 
-    if lvl_num not in (1, 2, 3, 4, 5, 6, 7, 8, 9):
+    if lvl_num not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):
         raise ValueError(
-            f"Level must be between 1 and 9 (or '1M'..'9M'); got {level}"
+            f"Level must be between 1 and 10 (or '1M'..'10M'); got {level}"
         )
 
     rng = random.Random(seed)
@@ -600,6 +668,7 @@ def generate_multi_key_score(
         7: generate_level_7m,
         8: generate_level_8m,
         9: generate_level_9m,
+        10: generate_level_10m,
     }
     raw_score = generators[lvl_num](rng)
     clean_notes = _deduplicate_notes(raw_score.notes)
