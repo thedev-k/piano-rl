@@ -75,22 +75,18 @@ class MultiKeyPitchConvPolicy(ActorCriticPolicy):
         """Construct the 1D convolution stack, multi-binary action head, and value head."""
         if self.policy_size == "small":
             self.channels = 64
-            self.num_layers = 3
         elif self.policy_size == "medium":
             self.channels = 96
-            self.num_layers = 4
         elif self.policy_size == "large":
-            self.channels = 128
-            self.num_layers = 5
+            self.channels = 160
         else:
             raise ValueError(f"Unknown policy_size {self.policy_size}")
 
         # 1. Per-key reader convolution stack
         # Input channels = 2 channels * 16 time slots (32) + 4 beat one-hot + 1 tempo = 37 channels
-        self.convs = nn.ModuleList()
-        self.convs.append(nn.Conv1d(in_channels=37, out_channels=self.channels, kernel_size=3, padding=1))
-        for _ in range(self.num_layers - 1):
-            self.convs.append(nn.Conv1d(in_channels=self.channels, out_channels=self.channels, kernel_size=3, padding=1))
+        self.conv1 = nn.Conv1d(in_channels=37, out_channels=self.channels, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv1d(in_channels=self.channels, out_channels=self.channels, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv1d(in_channels=self.channels, out_channels=self.channels, kernel_size=3, padding=1)
 
         # 2. Final action linear layer producing 1 logit per key (shared across 88 keys)
         self.action_net = nn.Linear(self.channels, 1)
@@ -109,7 +105,7 @@ class MultiKeyPitchConvPolicy(ActorCriticPolicy):
 
         # Weight and bias initialization
         if self.ortho_init:
-            for m in self.convs:
+            for m in [self.conv1, self.conv2, self.conv3]:
                 nn.init.orthogonal_(m.weight, gain=np.sqrt(2))
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0.0)
@@ -156,9 +152,9 @@ class MultiKeyPitchConvPolicy(ActorCriticPolicy):
         x = th.cat([window, extra], dim=1)  # (batch, 37, 88)
 
         # 1D Convolution stack along pitch axis
-        h = x
-        for conv in self.convs:
-            h = F.relu(conv(h))
+        h = F.relu(self.conv1(x))
+        h = F.relu(self.conv2(h))
+        h = F.relu(self.conv3(h))
 
         # Apply action linear layer across all 88 pitch positions:
         # (batch, 64, 88) -> (batch, 88, 64) -> action_net -> (batch, 88, 1) -> (batch, 88)
