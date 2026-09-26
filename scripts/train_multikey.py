@@ -210,6 +210,7 @@ def train_multikey(
     neighbor_key_penalty: float = 0.0,
     repeat_penalty: float = 0.0,
     policy: str = "pitch_conv",
+    policy_size: str = "small",
     level_weights: Optional[Union[str, Dict[str, float]]] = None,
     scores_override: Optional[List[Score]] = None,
     score_weights_override: Optional[List[float]] = None,
@@ -321,8 +322,8 @@ def train_multikey(
     # Policy selection
     if policy == "pitch_conv":
         policy_class = MultiKeyPitchConvPolicy
-        policy_kwargs: Dict[str, Any] = {}
-        print("Using policy: MultiKeyPitchConvPolicy (1D shared pitch convolution + Bernoulli head)")
+        policy_kwargs: Dict[str, Any] = {"policy_size": policy_size}
+        print(f"Using policy: MultiKeyPitchConvPolicy (size={policy_size}, 1D shared pitch convolution + Bernoulli head)")
     elif policy == "mlp":
         policy_class = "MlpPolicy"
         policy_kwargs = dict(net_arch=dict(pi=[256, 256], vf=[256, 256]))
@@ -453,6 +454,13 @@ def main():
         help="Entropy bonus coefficient for MultiBinary(88) (default: 0.001).",
     )
     parser.add_argument(
+        "--policy-size",
+        type=str,
+        default="small",
+        choices=["small", "medium", "large"],
+        help="Scale the architecture size (channels & depth) for pitch_conv (default: small).",
+    )
+    parser.add_argument(
         "--exact-reward",
         type=float,
         default=1.0,
@@ -520,6 +528,7 @@ def main():
         neighbor_key_penalty=args.neighbor_key_penalty,
         repeat_penalty=args.repeat_penalty,
         policy=args.policy,
+        policy_size=args.policy_size,
         level_weights=args.level_weights,
     )
 

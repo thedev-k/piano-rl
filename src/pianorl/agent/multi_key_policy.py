@@ -48,7 +48,9 @@ class MultiKeyPitchConvPolicy(ActorCriticPolicy):
         normalize_images: bool = True,
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        policy_size: str = "small",
     ):
+        self.policy_size = policy_size
         super().__init__(
             observation_space=observation_space,
             action_space=action_space,
@@ -71,21 +73,35 @@ class MultiKeyPitchConvPolicy(ActorCriticPolicy):
 
     def _build(self, lr_schedule: Schedule) -> None:
         """Construct the 1D convolution stack, multi-binary action head, and value head."""
+        if self.policy_size == "small":
+            self.channels = 64
+            self.num_layers = 3
+        elif self.policy_size == "medium":
+            self.channels = 96
+            self.num_layers = 4
+        elif self.policy_size == "large":
+            self.channels = 128
+            self.num_layers = 5
+        else:
+            raise ValueError(f"Unknown policy_size {self.policy_size}")
+
         # 1. Per-key reader convolution stack
         # Input channels = 2 channels * 16 time slots (32) + 4 beat one-hot + 1 tempo = 37 channels
-        self.conv1 = nn.Conv1d(in_channels=37, out_channels=64, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv1d(in_channels=64, out_channels=64, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv1d(in_channels=64, out_channels=64, kernel_size=3, padding=1)
+        self.convs = nn.ModuleList()
+        self.convs.append(nn.Conv1d(in_channels=37, out_channels=self.channels, kernel_size=3, padding=1))
+        for _ in range(self.num_layers - 1):
+            self.convs.append(nn.Conv1d(in_channels=self.channels, out_channels=self.channels, kernel_size=3, padding=1))
 
         # 2. Final action linear layer producing 1 logit per key (shared across 88 keys)
-        self.action_net = nn.Linear(64, 1)
+        self.action_net = nn.Linear(self.channels, 1)
 
         # 3. Value function network (critic)
-        # Global summary size = 64 (avg pool) + 64 (max pool) + 4 (beat pos) + 1 (tempo) = 133
+        # Global summary size = C (avg) + C (max) + 4 (beat pos) + 1 (tempo) = 2*C + 5
+        val_in = self.channels * 2 + 5
         self.value_net = nn.Sequential(
-            nn.Linear(133, 64),
+            nn.Linear(val_in, self.channels),
             nn.ReLU(),
-            nn.Linear(64, 1),
+            nn.Linear(self.channels, 1),
         )
 
         # Action distribution: MultiBinary(88) with independent Bernoulli heads
@@ -93,7 +109,7 @@ class MultiKeyPitchConvPolicy(ActorCriticPolicy):
 
         # Weight and bias initialization
         if self.ortho_init:
-            for m in [self.conv1, self.conv2, self.conv3]:
+            for m in self.convs:
                 nn.init.orthogonal_(m.weight, gain=np.sqrt(2))
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0.0)
@@ -116,7 +132,7 @@ class MultiKeyPitchConvPolicy(ActorCriticPolicy):
         )
 
         total_params = sum(p.numel() for p in self.parameters())
-        print(f"MultiKeyPitchConvPolicy initialized with {total_params:,} parameters.")
+        print(f"MultiKeyPitchConvPolicy (size={self.policy_size}) initialized with {total_params:,} parameters.")
 
     def _forward_network(self, obs: th.Tensor) -> Tuple[th.Tensor, th.Tensor]:
         """Compute 88 independent action logits and value estimate from observation tensor."""
@@ -140,9 +156,9 @@ class MultiKeyPitchConvPolicy(ActorCriticPolicy):
         x = th.cat([window, extra], dim=1)  # (batch, 37, 88)
 
         # 1D Convolution stack along pitch axis
-        h = F.relu(self.conv1(x))
-        h = F.relu(self.conv2(h))
-        h = F.relu(self.conv3(h))  # (batch, 64, 88)
+        h = x
+        for conv in self.convs:
+            h = F.relu(conv(h))
 
         # Apply action linear layer across all 88 pitch positions:
         # (batch, 64, 88) -> (batch, 88, 64) -> action_net -> (batch, 88, 1) -> (batch, 88)
