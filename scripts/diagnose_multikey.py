@@ -47,6 +47,26 @@ def print_multikey_diagnosis_table(
     print("  * No Note Nearby: No note starts within +-2 steps (unprovoked speculative strike).")
     print("  * Full Chord Hit: Percentage of chord moments where ALL constituent notes were hit.\n")
 
+    if results.get("Overall", list(results.values())[0]).total_mismatch_notes > 0 or any(getattr(st, "total_mismatch_notes", 0) > 0 for st in results.values()):
+        print("=" * 115)
+        print("DURATION MISMATCH ANALYSIS (Notes with neighbor diff > 2x or > 1 beat)")
+        print("=" * 115)
+        print(f"{'Level':<10} | {'Baseline (All Notes)':<22} | {'Misses w/ Mismatch':<22} | {'Wrong Presses w/ Mismatch':<22}")
+        print("-" * 115)
+        for name, st in results.items():
+            if name == "Overall":
+                print("-" * 115)
+            baseline = (st.total_mismatch_notes / st.total_notes * 100) if st.total_notes > 0 else 0
+            misses = (st.missed_mismatch_notes / st.missed_notes * 100) if st.missed_notes > 0 else 0
+            wrongs = (st.wrong_press_mismatch / st.total_wrong * 100) if st.total_wrong > 0 else 0
+            print(f"{name:<10} | {st.total_mismatch_notes:<6}/{st.total_notes:<7} ({baseline:5.1f}%) | "
+                  f"{st.missed_mismatch_notes:<6}/{st.missed_notes:<7} ({misses:5.1f}%) | "
+                  f"{st.wrong_press_mismatch:<6}/{st.total_wrong:<7} ({wrongs:5.1f}%)")
+        print("=" * 115)
+        print("  * Baseline: % of ALL score notes that have a duration mismatch with a nearby note.")
+        print("  * Misses: % of MISSED notes that occur under the duration-mismatch condition.")
+        print("  * Wrong Presses: % of WRONG PRESSES that occur near a duration-mismatch note.\n")
+
 
 def print_multikey_midi_segment_table(
     results: Dict[str, MultiKeyDiagnosisStats],
@@ -88,6 +108,26 @@ def print_multikey_midi_segment_table(
     print("  * Not in Window: Pressed key does not appear anywhere in the 16-step lookahead window.")
     print("  * No Note Nearby: No note starts within +-2 steps (unprovoked speculative strike).")
     print("  * Full Chord Hit: Percentage of chord moments where ALL constituent notes were hit.\n")
+
+    if results.get("Overall", list(results.values())[0]).total_mismatch_notes > 0 or any(getattr(st, "total_mismatch_notes", 0) > 0 for st in results.values()):
+        print("=" * 125)
+        print("DURATION MISMATCH ANALYSIS (Notes with neighbor diff > 2x or > 1 beat)")
+        print("=" * 125)
+        print(f"{'Time Segment':<18} | {'Baseline (All Notes)':<22} | {'Misses w/ Mismatch':<22} | {'Wrong Presses w/ Mismatch':<22}")
+        print("-" * 125)
+        for name, st in results.items():
+            if name == "Overall":
+                print("-" * 125)
+            baseline = (st.total_mismatch_notes / st.total_notes * 100) if st.total_notes > 0 else 0
+            misses = (st.missed_mismatch_notes / st.missed_notes * 100) if st.missed_notes > 0 else 0
+            wrongs = (st.wrong_press_mismatch / st.total_wrong * 100) if st.total_wrong > 0 else 0
+            print(f"{name:<18} | {st.total_mismatch_notes:<6}/{st.total_notes:<7} ({baseline:5.1f}%) | "
+                  f"{st.missed_mismatch_notes:<6}/{st.missed_notes:<7} ({misses:5.1f}%) | "
+                  f"{st.wrong_press_mismatch:<6}/{st.total_wrong:<7} ({wrongs:5.1f}%)")
+        print("=" * 125)
+        print("  * Baseline: % of ALL score notes that have a duration mismatch with a nearby note.")
+        print("  * Misses: % of MISSED notes that occur under the duration-mismatch condition.")
+        print("  * Wrong Presses: % of WRONG PRESSES that occur near a duration-mismatch note.\n")
 
 
 def main():
@@ -136,6 +176,12 @@ def main():
         action="store_true",
         default=False,
         help="Print details of every Repeat error (timestep, pitch, and true score notes active within +-0.5 beats). Requires --midi-path.",
+    )
+    parser.add_argument(
+        "--duration-mismatch",
+        action="store_true",
+        default=False,
+        help="Analyze and report the percentage of errors occurring near duration mismatches (>2x or >1 beat difference).",
     )
     args = parser.parse_args()
 

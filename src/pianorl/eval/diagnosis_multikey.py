@@ -79,6 +79,10 @@ class MultiKeyDiagnosisStats:
     chord_steps_total: int = 0
     chord_steps_all_hit: int = 0
 
+    total_mismatch_notes: int = 0
+    missed_mismatch_notes: int = 0
+    wrong_press_mismatch: int = 0
+
     @property
     def total_wrong(self) -> int:
         return (
@@ -147,13 +151,31 @@ class MultiKeyDiagnosisStats:
             wrong_no_note_nearby=self.wrong_no_note_nearby + other.wrong_no_note_nearby,
             chord_steps_total=self.chord_steps_total + other.chord_steps_total,
             chord_steps_all_hit=self.chord_steps_all_hit + other.chord_steps_all_hit,
+            total_mismatch_notes=self.total_mismatch_notes + other.total_mismatch_notes,
+            missed_mismatch_notes=self.missed_mismatch_notes + other.missed_mismatch_notes,
+            wrong_press_mismatch=self.wrong_press_mismatch + other.wrong_press_mismatch,
         )
+
+
+def target_has_duration_mismatch(t: dict, all_targets: List[dict], threshold_beats: float = 1.0, threshold_ratio: float = 2.0) -> bool:
+    d1 = t.get("duration_beats", 0.0)
+    for t2 in all_targets:
+        if t2 is t:
+            continue
+        if abs(t2["start_step"] - t["start_step"]) <= 2 and abs(t2["pitch"] - t["pitch"]) <= 2:
+            d2 = t2.get("duration_beats", 0.0)
+            if min(d1, d2) > 0 and max(d1, d2) > threshold_ratio * min(d1, d2):
+                return True
+            if abs(d1 - d2) > threshold_beats:
+                return True
+    return False
 
 
 def run_multikey_diagnosis(
     player_or_path: Union[str, Path, object],
     scores_list: List[Score],
     split_items: Optional[List[dict]] = None,
+    analyze_mismatch: bool = False,
 ) -> Dict[str, MultiKeyDiagnosisStats]:
     """Run diagnostic play on multi-key pieces and collect error and chord statistics."""
     if isinstance(player_or_path, (str, Path)):
@@ -199,6 +221,12 @@ def run_multikey_diagnosis(
         lvl.chord_steps_total += len(chord_steps)
         overall_stats.chord_steps_total += len(chord_steps)
 
+        if analyze_mismatch:
+            for t in targets:
+                if target_has_duration_mismatch(t, targets):
+                    lvl.total_mismatch_notes += 1
+                    overall_stats.total_mismatch_notes += 1
+
         terminated = False
         truncated = False
         prev_wrong = 0
@@ -242,6 +270,15 @@ def run_multikey_diagnosis(
                             lvl.wrong_no_note_nearby += 1
                             overall_stats.wrong_no_note_nearby += 1
 
+                        if analyze_mismatch:
+                            # Check if nearest active targets have duration mismatch
+                            for tgt in targets:
+                                if abs(tgt["start_step"] - step_before) <= 2 and abs(tgt["pitch"] - p) <= 2:
+                                    if target_has_duration_mismatch(tgt, targets):
+                                        lvl.wrong_press_mismatch += 1
+                                        overall_stats.wrong_press_mismatch += 1
+                                        break
+
                 prev_wrong = curr_wrong
 
         # End of piece: update hits, misses, and check which chords had ALL notes hit
@@ -252,6 +289,13 @@ def run_multikey_diagnosis(
         overall_stats.hits_exact += info["hits_exact"]
         overall_stats.hits_off_by_one += info["hits_off_by_one"]
         overall_stats.missed_notes += info["missed_notes"]
+
+        if analyze_mismatch:
+            for t in targets:
+                if not t.get("matched", False):
+                    if target_has_duration_mismatch(t, targets):
+                        lvl.missed_mismatch_notes += 1
+                        overall_stats.missed_mismatch_notes += 1
 
         for s in chord_steps:
             chord_targets = [t for t in targets if t["start_step"] == s]
@@ -270,6 +314,7 @@ def run_multikey_midi_segment_diagnosis(
     segment_seconds: Optional[float] = None,
     return_repeat_errors: bool = False,
     repeat_window_beats: float = 0.5,
+    analyze_mismatch: bool = False,
 ) -> Union[
     Tuple[Dict[str, MultiKeyDiagnosisStats], Score],
     Tuple[Dict[str, MultiKeyDiagnosisStats], Score, List[RepeatErrorDetail]],
@@ -368,6 +413,9 @@ def run_multikey_midi_segment_diagnosis(
         seg_idx = find_interval_idx(t_sec)
         segment_stats[seg_idx].total_notes += 1
         overall_stats.total_notes += 1
+        if analyze_mismatch and target_has_duration_mismatch(t, targets):
+            segment_stats[seg_idx].total_mismatch_notes += 1
+            overall_stats.total_mismatch_notes += 1
 
     # 2. Track chords
     step_target_counts: Dict[int, int] = {}
@@ -433,6 +481,14 @@ def run_multikey_midi_segment_diagnosis(
                         segment_stats[seg_idx].wrong_no_note_nearby += 1
                         overall_stats.wrong_no_note_nearby += 1
 
+                    if analyze_mismatch:
+                        for tgt in targets:
+                            if abs(tgt["start_step"] - step_before) <= 2 and abs(tgt["pitch"] - p) <= 2:
+                                if target_has_duration_mismatch(tgt, targets):
+                                    segment_stats[seg_idx].wrong_press_mismatch += 1
+                                    overall_stats.wrong_press_mismatch += 1
+                                    break
+
             prev_wrong = curr_wrong
 
     # 4. Attribute hits and misses
@@ -449,6 +505,9 @@ def run_multikey_midi_segment_diagnosis(
         else:
             segment_stats[seg_idx].missed_notes += 1
             overall_stats.missed_notes += 1
+            if analyze_mismatch and target_has_duration_mismatch(t, targets):
+                segment_stats[seg_idx].missed_mismatch_notes += 1
+                overall_stats.missed_mismatch_notes += 1
 
     # 5. Check chord completion
     for s in chord_steps:
