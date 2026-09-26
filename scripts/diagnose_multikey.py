@@ -215,6 +215,7 @@ def main():
                 split_seconds=split_sec_list,
                 segment_seconds=args.segment_seconds,
                 return_repeat_errors=True,
+                analyze_mismatch=args.duration_mismatch,
             )
         else:
             results, _ = run_multikey_midi_segment_diagnosis(
@@ -223,6 +224,7 @@ def main():
                 split_seconds=split_sec_list,
                 segment_seconds=args.segment_seconds,
                 return_repeat_errors=False,
+                analyze_mismatch=args.duration_mismatch,
             )
 
         print_multikey_midi_segment_table(
