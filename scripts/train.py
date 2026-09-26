@@ -25,18 +25,22 @@ class PlainProgressCallback(BaseCallback):
         self.print_freq = print_freq
         self.last_print_step = 0
         self.start_time = 0.0
+        self.initial_steps = 0
 
     def _on_training_start(self) -> None:
         self.start_time = time.time()
+        self.initial_steps = self.model.num_timesteps
         print(f"Training started! Target: {self.total_timesteps:,} timesteps.\n")
 
     def _on_step(self) -> bool:
-        current_step = self.num_timesteps
-        if current_step - self.last_print_step >= self.print_freq:
+        # Calculate steps for this current run (ignoring steps from resumed checkpoint)
+        session_step = self.model.num_timesteps - self.initial_steps
+
+        if session_step - self.last_print_step >= self.print_freq:
             elapsed = time.time() - self.start_time
-            fps = current_step / elapsed if elapsed > 0 else 0
-            percent = (current_step / self.total_timesteps) * 100
-            remaining_steps = max(0, self.total_timesteps - current_step)
+            fps = session_step / elapsed if elapsed > 0 else 0
+            percent = (session_step / self.total_timesteps) * 100
+            remaining_steps = max(0, self.total_timesteps - session_step)
             eta_seconds = remaining_steps / fps if fps > 0 else 0
             eta_str = f"{int(eta_seconds // 60)}m {int(eta_seconds % 60):02d}s"
 
@@ -50,10 +54,10 @@ class PlainProgressCallback(BaseCallback):
                 reward_str = "calculating..."
 
             print(
-                f"[Progress] {current_step:,} / {self.total_timesteps:,} steps ({percent:.1f}%) | "
+                f"[Progress] {session_step:,} / {self.total_timesteps:,} steps ({percent:.1f}%) | "
                 f"Speed: {fps:,.0f} steps/s | ETA: {eta_str} | Mean Reward: {reward_str}"
             )
-            self.last_print_step = current_step
+            self.last_print_step = session_step
 
         return True
 
@@ -230,8 +234,8 @@ def train(
         )
 
     # Callbacks
-    # Save checkpoint every 50,000 steps
-    save_freq = max(1, 50000 // n_envs)
+    # Save checkpoint every 10,000 steps
+    save_freq = max(1, 10000 // n_envs)
     checkpoint_callback = CheckpointCallback(
         save_freq=save_freq,
         save_path=str(checkpoints_dir),
