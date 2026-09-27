@@ -1,0 +1,100 @@
+:root {
+  /* Surface & Mechanical Palette */
+  --surface-ebony: #101114;
+  --surface-chassis: #16181d;
+  --surface-well: #0b0c0e;
+  --surface-bay: #1c1e24;
+  --surface-bay-hover: #23262e;
+  
+  --border-subtle: #252830;
+  --border-focus: #383c48;
+  --border-accent: #c89b53;
+
+  /* Real Acoustic Piano Keys */
+  --key-ivory: #f6f3ec;
+  --key-ivory-shadow: #cfc8b8;
+  --key-ebony: #18191d;
+  --key-ebony-rim: #2a2c34;
+
+  /* Telemetry Status (Grounded in Felt & Acoustic Materials) */
+  --status-strike-hit: #4e9f76;     /* Sage/celadon velvet felt */
+  --status-strike-hit-glow: rgba(78, 159, 118, 0.35);
+  --status-strike-off: #c89b53;     /* Muted bronze / brass felt */
+  --status-strike-off-glow: rgba(200, 155, 83, 0.35);
+  --status-strike-wrong: #c25442;   /* Terracotta / rosewood warning strike */
+  --status-strike-wrong-glow: rgba(194, 84, 66, 0.35);
+  --status-miss: #565d6b;           /* Graphite unplayed damper shadow */
+  --status-active-ai: #477998;      /* Deep cobalt key depression */
+
+  /* Text & Readouts */
+  --text-primary: #eceff4;
+  --text-muted: #848c9c;
+  --text-dim: #4e5564;
+  --text-highlight: #d8dee9;
+
+  /* Motion Tokens (transitions.dev & emil-design-eng) */
+  --duration-micro: 80ms;
+  --duration-quick: 150ms;
+  --duration-fast: 250ms;
+  --duration-medium: 350ms;
+  --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-strike: cubic-bezier(0.12, 0.9, 0.3, 1.2);
+
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  color-scheme: dark;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--surface-ebony);
+  color: var(--text-primary);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tabular figures for telemetry readouts */
+.tabular-num {
+  font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.02em;
+}
+
+/* Button & Interactive states */
+button, select, input {
+  font-family: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  transition: transform var(--duration-fast) var(--ease-smooth-out),
+              background var(--duration-quick) var(--ease-smooth-out),
+              border-color var(--duration-quick) var(--ease-smooth-out);
+}
+
+button:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  button:active {
+    transform: none;
+  }
+}
