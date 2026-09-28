@@ -362,9 +362,20 @@ async def websocket_endpoint(websocket: WebSocket):
             current_task.cancel()
 
 
-# Mount the static files at the end so API routes work
-app.mount("/", StaticFiles(directory="web", html=True), name="web")
+dist_path = Path("dist")
 
+@app.get("/")
+def serve_index():
+    if not dist_path.exists() or not (dist_path / "index.html").exists():
+        raise HTTPException(status_code=500, detail="ERROR: 'dist' directory not found. Please run 'npm run build' first.")
+    response = FileResponse(dist_path / "index.html")
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+if dist_path.exists():
+    app.mount("/", StaticFiles(directory="dist"), name="dist")
+else:
+    print("WARNING: 'dist' directory not found. Please run 'npm run build' before accessing the frontend.")
 
 def main():
     parser = argparse.ArgumentParser(description="Run the Piano-RL web player.")
@@ -394,10 +405,6 @@ def main():
         print(
             f"Warning: Model not found at {args.model_path}. Will crash if play is attempted."
         )
-
-    # Ensure web directory exists
-    Path("web").mkdir(exist_ok=True)
-
     print(f"Starting server on http://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
